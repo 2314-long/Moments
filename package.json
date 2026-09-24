@@ -1,0 +1,39 @@
+{
+  "name": "shiguangce",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "时光册 — 数字纪念册 / 数字旅行手账",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit false --emitDeclarationOnly false || tsc -p tsconfig.app.json --noEmit",
+    "lint": "tsc -p tsconfig.app.json --noEmit",
+    "test": "node --import ./tests/ts-resolve.mjs --test tests/*.test.ts",
+    "check": "node scripts/validate-refs.mjs && node --import ./tests/ts-resolve.mjs --test tests/*.test.ts && tsc -p tsconfig.app.json --noEmit",
+    "gen:assets": "node scripts/generate-demo-assets.mjs",
+    "shot": "node scripts/screenshot.mjs",
+    "flip:shots": "node scripts/flip-shots.mjs",
+    "flip:frames": "node scripts/audit-flip-frames.mjs",
+    "flip:verify": "node scripts/verify-flip-invariants.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "0.454.0",
+    "nanoid": "5.0.9",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-router-dom": "6.28.0",
+    "zustand": "5.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "@vitejs/plugin-react": "4.3.4",
+    "autoprefixer": "10.4.20",
+    "postcss": "8.4.49",
+    "tailwindcss": "3.4.17",
+    "typescript": "5.6.3",
+    "vite": "6.0.3"
+  }
+}

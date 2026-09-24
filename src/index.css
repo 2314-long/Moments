@@ -1,0 +1,282 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ================================================================== *
+ * 时光册 · 全局样式
+ *
+ * 设计基调：深蓝灰沉浸式背景 + 温暖纸张 + 克制的装饰。
+ * 只在这里定义「质感」必需的 CSS（噪点、纸张纹理、书脊渐变、
+ * 翻页透视），其余一律交给 Tailwind 工具类。
+ * ================================================================== */
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-ink-900 text-ink-100 font-sans antialiased;
+    /* 背景不是纯色：左上有一处极弱的光，右下稍暗，形成空间感 */
+    background-image:
+      radial-gradient(1200px 700px at 18% -10%, rgba(93, 107, 135, 0.18), transparent 62%),
+      radial-gradient(900px 600px at 88% 108%, rgba(168, 80, 58, 0.08), transparent 60%),
+      linear-gradient(180deg, #10151f 0%, #0c111a 100%);
+    background-attachment: fixed;
+    overflow: hidden;
+  }
+
+  ::selection {
+    background: rgba(194, 96, 63, 0.32);
+  }
+
+  /* 细滚动条，避免默认样式打断沉浸感 */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(135, 148, 173, 0.26);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(135, 148, 173, 0.42);
+  }
+
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  input[type='range'] {
+    @apply h-1 w-full appearance-none rounded-full bg-ink-700;
+  }
+  input[type='range']::-webkit-slider-thumb {
+    @apply h-3.5 w-3.5 appearance-none rounded-full bg-ink-200;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+    cursor: pointer;
+  }
+  input[type='range']::-moz-range-thumb {
+    @apply h-3.5 w-3.5 rounded-full border-0 bg-ink-200;
+    cursor: pointer;
+  }
+
+  [contenteditable]:focus {
+    outline: none;
+  }
+}
+
+@layer components {
+  /* ---------------- 纸张 ---------------- */
+
+  /* 纸张底噪：用 SVG feTurbulence 生成，无需图片资源 */
+  .paper-grain::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.5;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.16'/%3E%3C/svg%3E");
+  }
+
+  /* 纸张纤维：极淡的横向纹路 */
+  .paper-fiber::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.35;
+    background-image: repeating-linear-gradient(
+      92deg,
+      rgba(140, 120, 90, 0.05) 0px,
+      rgba(140, 120, 90, 0.05) 1px,
+      transparent 1px,
+      transparent 4px
+    );
+  }
+
+  .paper-shadow {
+    box-shadow:
+      0 1px 1px rgba(0, 0, 0, 0.14),
+      0 2px 6px rgba(0, 0, 0, 0.1),
+      0 18px 40px -22px rgba(0, 0, 0, 0.6);
+  }
+
+  /* 书脊：中间装订处的暗部渐变 + 折痕线 */
+  .book-spine-left {
+    background: linear-gradient(
+      to right,
+      rgba(0, 0, 0, 0.16) 0%,
+      rgba(0, 0, 0, 0.05) 32%,
+      rgba(0, 0, 0, 0) 100%
+    );
+  }
+  .book-spine-right {
+    background: linear-gradient(
+      to left,
+      rgba(0, 0, 0, 0.16) 0%,
+      rgba(0, 0, 0, 0.05) 32%,
+      rgba(0, 0, 0, 0) 100%
+    );
+  }
+
+  /* ---------------- 控件 ---------------- */
+
+  .tool-btn {
+    @apply flex items-center justify-center rounded-xl text-ink-300 transition-all duration-150;
+  }
+  .tool-btn:hover {
+    @apply bg-ink-700/70 text-ink-100;
+  }
+  .tool-btn:active {
+    transform: scale(0.96);
+  }
+  .tool-btn[data-active='true'] {
+    @apply bg-ink-600/80 text-white;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.09);
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-sm font-medium
+      transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-40;
+  }
+  .btn-ghost {
+    @apply btn text-ink-300 hover:bg-ink-700/70 hover:text-ink-100;
+  }
+  .btn-primary {
+    @apply btn bg-clay-500 text-white hover:bg-clay-400;
+    box-shadow: 0 6px 18px -8px rgba(194, 96, 63, 0.9);
+  }
+  .btn-subtle {
+    @apply btn bg-ink-700/70 text-ink-200 hover:bg-ink-600/80 hover:text-white;
+  }
+
+  .field {
+    @apply w-full rounded-lg border border-ink-700 bg-ink-850/80 px-2.5 py-1.5 text-sm text-ink-100
+      placeholder:text-ink-400 focus:border-ink-500 focus:outline-none;
+  }
+
+  .panel {
+    @apply rounded-2xl border border-white/[0.06] bg-ink-850/80 backdrop-blur-xl;
+    box-shadow: 0 24px 48px -28px rgba(0, 0, 0, 0.9);
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-white/[0.07] bg-ink-800/70
+      px-2.5 py-1 text-xs text-ink-300;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* 元素选中框：用 outline 而非 border，避免影响布局尺寸 */
+  .element-outline {
+    outline: 1.5px solid rgba(94, 158, 214, 0.95);
+    outline-offset: 0px;
+  }
+
+  /*
+   * 启动指示条。
+   *
+   * 刻意使用「有限次数」的动画：无限循环的 CSS 动画会让浏览器永远不进入
+   * idle 状态，这既影响 headless 截图（virtual-time-budget 无法推进），
+   * 也会让部分性能分析工具无法拿到稳定快照。启动动画本来也只需要很短时间。
+   */
+  .boot-bar {
+    animation: boot-slide 1.15s ease-in-out 2;
+  }
+
+  @keyframes boot-slide {
+    0% {
+      transform: translateX(-110%);
+    }
+    100% {
+      transform: translateX(320%);
+    }
+  }
+
+  /* ---------------------------------------------------------------- *
+   * 阅读与书本动效
+   * ---------------------------------------------------------------- */
+
+  /* 阅读器入场：页面轻微上浮淡入 */
+  @keyframes fade-slide {
+    0% {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /*
+   * 全局尊重系统的「减弱动态效果」。
+   *
+   * 这不是可选项：前庭功能障碍用户会因为大幅位移与 3D 旋转产生不适，
+   * 而翻书正是最典型的触发源。开启后动画与过渡被压缩到近乎瞬时，
+   * 功能完全不受影响（阅读器的翻页会被直接切换，见 Reader 里的判断）。
+   */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  .preserve-3d {
+    transform-style: preserve-3d;
+  }
+
+  .backface-hidden {
+    backface-visibility: hidden;
+  }
+}
+
+/* 编辑器内的元素文字不应该被浏览器选中（除非在编辑模式） */
+.editor-surface {
+  user-select: none;
+}
+.editor-surface input,
+.editor-surface textarea,
+.editor-surface [contenteditable='true'] {
+  user-select: text;
+}
+
+@media print {
+  body {
+    background: #fff;
+  }
+}

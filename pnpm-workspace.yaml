@@ -1,0 +1,10 @@
+# pnpm 配置（pnpm 11 起设置从 package.json 迁移到这里）
+#
+# minimumReleaseAge: 0 —— 本项目是全新的前端 Demo，所有依赖都已在 package.json
+# 中锁定精确版本；默认的「最小发布时长」策略会因一个传递依赖
+# (electron-to-chromium) 判定违规，导致本地任何 pnpm 命令都无法执行。
+minimumReleaseAge: 0
+
+# esbuild 需要执行安装脚本以准备原生二进制（Vite 依赖它）
+allowBuilds:
+  esbuild: true
