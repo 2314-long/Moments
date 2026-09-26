@@ -232,6 +232,126 @@
   .backface-hidden {
     backface-visibility: hidden;
   }
+
+  /* 首页书卡 → 阅读器的实体书开启动画。过渡层挂在 Router 外，
+     所以路由可以提前切换，视觉上的同一本书仍然连续存在。 */
+  .book-opening-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    overflow: hidden;
+    pointer-events: auto;
+    perspective: 1800px;
+  }
+
+  .book-opening-overlay.is-handoff {
+    opacity: 0;
+    transition: opacity 240ms ease;
+  }
+
+  .book-opening-backdrop {
+    position: absolute;
+    inset: 0;
+    /* 路由目标会立即挂载在遮罩下方，因此从第一帧就要隔离底层页面。
+       书本本身仍从首页捕获的位置开始运动，连续性由它来承担。 */
+    background: rgb(9, 12, 18);
+    transition: background 1.1s ease;
+  }
+
+  .book-opening-stage {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 196px;
+    height: 261px;
+    transform: var(--book-start-transform);
+    transform-origin: center center;
+    transform-style: preserve-3d;
+    transition: transform 540ms cubic-bezier(0.22, 0.75, 0.18, 1), width 540ms cubic-bezier(0.22, 0.75, 0.18, 1), height 540ms cubic-bezier(0.22, 0.75, 0.18, 1);
+  }
+
+  .book-opening-stage.is-centered {
+    left: 50%;
+    top: 50%;
+    width: var(--book-centered-width);
+    height: var(--book-centered-height);
+    transform: translate(-50%, -50%) translateZ(80px) rotateX(2deg);
+  }
+
+  .book-opening-backdrop.is-centered {
+    /* 路由会在过渡层下面提前挂载阅读器；这里必须足够不透明，
+       否则会同时看到阅读器、旧书卡和过渡中的书，形成三层重影。 */
+    background: rgb(9, 12, 18);
+  }
+
+  .book-opening-backdrop.is-pages {
+    background: transparent;
+    transition: background 700ms ease;
+  }
+
+  .book-opening-cover {
+    position: absolute;
+    inset: 0;
+    transform-style: preserve-3d;
+  }
+
+  .book-opening-cover {
+    z-index: 4;
+    width: 196px;
+    height: 261px;
+    inset: auto;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    transform-origin: center center;
+    transition: transform 520ms cubic-bezier(0.2, 0.78, 0.18, 1), opacity 260ms ease;
+  }
+
+  .book-opening-cover-turn {
+    position: absolute;
+    inset: 0;
+    transform-origin: right center;
+    transform-style: preserve-3d;
+    transition: transform 520ms cubic-bezier(0.2, 0.78, 0.18, 1);
+  }
+
+  .book-opening-stage.is-centered .book-opening-cover,
+  .book-opening-stage.is-opening .book-opening-cover {
+    transform: translate(-50%, -50%) scale(var(--book-cover-scale));
+  }
+
+  .book-opening-stage.is-opening .book-opening-cover-turn {
+    /* 不进入完全侧立的 90° 奇异帧：那一帧会暴露封面自身的纸张侧面，
+       并且和下方正在展开的双页发生视觉冲突。用约 68° 完成开封，
+       再交叉淡出到稳定的双页，仍然保留明显的书脊旋转感。 */
+    transform: rotateY(-68deg);
+  }
+
+  .book-opening-stage.is-pages .book-opening-cover {
+    opacity: 0;
+  }
+
+  .book-opening-glint {
+    position: absolute;
+    inset: 0;
+    z-index: 8;
+    pointer-events: none;
+    opacity: 0;
+    background: linear-gradient(112deg, transparent 42%, rgba(255,255,255,0.13) 49%, transparent 57%);
+    transition: opacity 380ms ease;
+  }
+
+  .book-opening-stage.is-opening .book-opening-glint {
+    opacity: 1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .book-opening-stage,
+    .book-opening-cover,
+    .book-opening-backdrop {
+      transition-duration: 0.01ms !important;
+    }
+  }
 }
 
 /* 编辑器内的元素文字不应该被浏览器选中（除非在编辑模式） */

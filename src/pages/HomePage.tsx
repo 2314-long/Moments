@@ -18,6 +18,7 @@ import { BookCover, formatRange } from '@/components/album/BookCover'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { Toast, useToast } from '@/components/ui/Toast'
 import type { Album } from '@/types/album'
+import { useBookOpening } from '@/components/transition/BookOpeningTransition'
 
 /**
  * 首页 —— 「我的纪念册」。
@@ -30,6 +31,7 @@ export function HomePage() {
   const albums = useLibraryStore((state) => state.albums)
   const photoCount = usePhotoStore((state) => state.assets.length)
   const navigate = useNavigate()
+  const { openAlbum, opening } = useBookOpening()
   const { toast, show } = useToast()
 
   const [query, setQuery] = useState('')
@@ -167,7 +169,13 @@ export function HomePage() {
                   key={album.id}
                   album={album}
                   index={index}
-                  onOpen={() => navigate(`/album/${album.id}/read`)}
+                  onOpen={(source) => {
+                    if (opening) return
+                    openAlbum(album, source)
+                    // 先切到阅读路由，让 Reader 在过渡层下面提前挂载、解析照片。
+                    // 用户在整个过程中只看到上面的共享书本视觉层。
+                    navigate(`/album/${album.id}/read`)
+                  }}
                   onEdit={() => navigate(`/album/${album.id}/edit`)}
                   menuOpen={menuFor === album.id}
                   onToggleMenu={() => setMenuFor(menuFor === album.id ? null : album.id)}
@@ -279,7 +287,7 @@ function AlbumBookCard({
 }: {
   album: Album
   index: number
-  onOpen: () => void
+  onOpen: (source: HTMLElement) => void
   onEdit: () => void
   menuOpen: boolean
   onToggleMenu: () => void
@@ -294,12 +302,12 @@ function AlbumBookCard({
       <div
         className="relative cursor-pointer transition-transform duration-300 ease-out will-change-transform group-hover:-translate-y-2"
         style={{ transform: `rotate(${tilt}deg)` }}
-        onClick={onOpen}
+        onClick={(event) => onOpen(event.currentTarget)}
         onDoubleClick={onEdit}
         role="button"
         tabIndex={0}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') onOpen()
+          if (e.key === 'Enter') onOpen(e.currentTarget)
         }}
       >
         <div className="transition-transform duration-300 group-hover:rotate-[0.6deg]">
