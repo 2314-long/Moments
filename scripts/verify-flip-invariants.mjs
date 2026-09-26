@@ -119,13 +119,34 @@ const READ_EXPR = `(() => {
     leafSpineTone: Array.from(document.querySelectorAll('[data-leaf-layer] div')).filter(
       (el) => getComputedStyle(el).backgroundColor === 'rgb(234, 226, 210)',
     ).length,
-    /** 书脊层与纸叶层的 z-index：书脊必须压在纸叶之上（否则落地时书脊阴影会跳回来） */
-    spineZ: document.querySelector('[data-spine]')
-      ? getComputedStyle(document.querySelector('[data-spine]')).zIndex
+    /**
+     * 书脊/折痕与纸叶的层级关系。
+     *
+     * 说明：书脊不再是一层压在纸叶之上的独立渐变（那正是「中缝看起来像
+     * 第三张纸」的根因），因此这里不再断言「书脊 z-index > 纸叶 z-index」。
+     * 现在要保证的是相反的一件事：**没有任何中缝元素压在纸叶之上** ——
+     * 折痕长在页面自己的矩形里（z=30），装订缝画在页面之下（z=1），
+     * 两者都不会在翻页时变成一块与运动无关的浮层。
+     */
+    gutterZ: document.querySelector('[data-gutter]')
+      ? getComputedStyle(document.querySelector('[data-gutter]')).zIndex
+      : null,
+    foldShadeCount: document.querySelectorAll('[data-fold]').length,
+    foldZ: document.querySelector('[data-fold]')
+      ? getComputedStyle(document.querySelector('[data-fold]')).zIndex
       : null,
     leafLayerZ: document.querySelector('[data-leaf-layer]')
       ? getComputedStyle(document.querySelector('[data-leaf-layer]')).zIndex
       : null,
+    /** 中缝里除纸叶之外，是否还有别的元素压在页面之上 */
+    gutterAboveLeaf: Array.from(
+      document.querySelectorAll('[data-gutter], [data-fold]'),
+    ).some((el) => {
+      const z = Number(getComputedStyle(el).zIndex)
+      const leaf = document.querySelector('[data-leaf-layer]')
+      const lz = leaf ? Number(getComputedStyle(leaf).zIndex) : 0
+      return Number.isFinite(z) && z > lz
+    }),
   }
 })()`
 
@@ -449,25 +470,31 @@ console.log('\n【最后一帧 → 落平帧】纸叶在书口侧不能有可见
 }
 
 /**
- * 书脊与书口，两条不变量。
+ * 中缝结构与书口，两条不变量。
  *
- * 1. **书脊必须压在纸叶之上。** 早先书脊和页面放在同一个容器里（z-index 20/21），
- *    而纸叶是另一个兄弟容器（z-index 40）—— 纸叶把书脊阴影盖住了。于是翻页时
- *    纸叶落在哪侧、那侧页面上的书脊阴影就消失，落平帧纸叶一卸载、阴影又跳回来。
- *    实测这让「最后一帧 → 落平帧」在页面内侧多出一条贯穿整页高的竖带差异
- *    （宽约 22 屏幕px），正是「书脊这两个地方翻完还是会变」。
+ * 1. **没有任何中缝元素压在纸叶之上。** 这里以前断言的是相反的事情
+ *    （「书脊必须压在纸叶之上」），因为当时书脊是一层跨在两页之上的
+ *    独立渐变（z-index 50）：它确实必须压住纸叶，否则翻页时会被盖掉。
+ *    但那条跨页渐变正是「中缝看起来像第三张纸」的根因，已经拆掉：
+ *    折痕改由页面自己承载（`[data-fold]`，z=30，在页面容器内），
+ *    装订缝画在页面之下（`[data-gutter]`，z=1）。
+ *    所以现在要守的是：**它们都不高于纸叶层**，不会成为浮在书上的无关色块。
  * 2. **书口不能有任何凸出于页面的装饰。** 这里先后守过两种实现：一层层错开的
  *    纸片（阶梯）、一条平直的厚边 —— 两者都会凸出页面（最多 21 页px ≈ 16 屏幕px），
  *    用户明确要求「完全不要突出」，于是整体去掉了。
  */
-console.log('\n【书脊】必须压在纸叶之上，且不应当有任何凸出于页面的装饰')
+console.log('\n【中缝】折痕与装订缝都不得压在纸叶之上，且不应有任何凸出于页面的装饰')
 console.log(
-  `  纸叶存在时：书脊层 z-index=${nextNear?.spineZ}，纸叶层 z-index=${nextNear?.leafLayerZ}`,
+  `  纸叶存在时：装订缝 z=${nextNear?.gutterZ}，折痕 z=${nextNear?.foldZ}，纸叶层 z=${nextNear?.leafLayerZ}`,
+)
+console.log(`  折痕元素个数 = ${nextNear?.foldShadeCount}（左右页各一个，应当为 2）`)
+check(
+  nextNear?.gutterAboveLeaf === false,
+  `中缝元素不得压在纸叶之上（装订缝 z=${nextNear?.gutterZ}，折痕 z=${nextNear?.foldZ}，纸叶 z=${nextNear?.leafLayerZ}）`,
 )
 check(
-  Number(nextNear?.spineZ) > Number(nextNear?.leafLayerZ),
-  `书脊层必须画在纸叶之上（书脊 z=${nextNear?.spineZ}，纸叶 z=${nextNear?.leafLayerZ}）—— ` +
-    `否则翻页时纸叶会盖掉书脊阴影，落平那一帧阴影又会跳回来`,
+  nextNear?.foldShadeCount === 2,
+  `每个页面内缘都应有一个折痕元素，实际 ${nextNear?.foldShadeCount} 个`,
 )
 console.log(`  凸出页面盒子的纸块类元素 = ${landedNext.deckCount} 个（应当为 0）`)
 console.log(

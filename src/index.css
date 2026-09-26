@@ -119,23 +119,12 @@
       0 18px 40px -22px rgba(0, 0, 0, 0.6);
   }
 
-  /* 书脊：中间装订处的暗部渐变 + 折痕线 */
-  .book-spine-left {
-    background: linear-gradient(
-      to right,
-      rgba(0, 0, 0, 0.16) 0%,
-      rgba(0, 0, 0, 0.05) 32%,
-      rgba(0, 0, 0, 0) 100%
-    );
-  }
-  .book-spine-right {
-    background: linear-gradient(
-      to left,
-      rgba(0, 0, 0, 0.16) 0%,
-      rgba(0, 0, 0, 0.05) 32%,
-      rgba(0, 0, 0, 0) 100%
-    );
-  }
+  /*
+   * 这里原本还有 .book-spine-left / .book-spine-right 两组渐变，
+   * 用途是「页面内侧的装订暗部」。它们已经删除：折痕必须贴着纸张**真正的**
+   * 内边缘，而这条边只有页面容器知道（还要考虑书脊侧切面与翻页旋转），
+   * 所以改由 BookSpread 的 PageFoldShade 渲染在页面自己的矩形里。
+   */
 
   /* ---------------- 控件 ---------------- */
 

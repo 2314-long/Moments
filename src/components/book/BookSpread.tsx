@@ -12,13 +12,25 @@ import { BookPage, pageThickness } from './BookPage'
  *
  *        ┌───────────┬───────────┐
  *        │  当前左页  │  当前右页  │   ← 摊开的两块纸板
- *        ├───────────┼───────────┤
- *        │  已翻过的   │  还没翻的   │   ← 下面压着的纸板（露出纸边）
  *        └───────────┴───────────┘
+ *                     ↑
+ *              两张纸向里陷进去的折痕 / 装订缝
  *
- * 所以每个跨页除了当前两页，还要在**书口一侧**露出下层纸板的边缘：
- * 一层层错开的细窄纸边 + 逐层加深的阴影，厚度随剩余页数变化。
- * 没有这层「叠起来的纸板」，看起来就永远是一张无限薄的平面。
+ * ── 书脊的正确构成 ────────────────────────────────────────────
+ *
+ * 左页是一张**完整连续**的纸，右页也是。中缝不能看起来像「第三张纸」，
+ * 因此这里刻意**没有**任何跨在两页之上的装饰层。书脊只由三样东西构成：
+ *
+ *   1. `PageFoldShade` —— 每页内缘的折痕，**渲染在该页自己的容器里**，
+ *      所以它天然跟随这一页的一切变换（静止时贴在纸上，翻页时随纸叶走）；
+ *   2. `[data-gutter]` —— 两页之间那条真正的窄缝，画在页面**之下**，
+ *      只有缝里露出来的那一条是暗的；
+ *   3. 纸叶抬起时投在页面上的动态阴影（随进度增强/收敛）。
+ *
+ * 早先这里挂过一条 `width: 74` 的整页高渐变，跨在两页之上、压在所有纸之上。
+ * 它的几何与任何一张纸都无关，于是中缝就成了「一张浮在书上的独立纸」：
+ * 翻页时它不跟着任何一页动，静止时它的暗带边界（落在右页正文起始处）
+ * 又与纸边对不上。详见下面「关于书脊」的注释。
  *
  * ── 为什么书本与纸叶是两个并列的透视容器 ───────────────────────
  *
@@ -100,6 +112,72 @@ export interface BookSpreadProps {
 
 /** 两页之间的装订缝 */
 export const BOOK_GAP = 14
+
+/**
+ * 折痕暗部从纸边往里渗透的距离（页面坐标）。
+ *
+ * 「书脊」在视觉上只能是**纸张内缘的折痕**：一条很窄、贴着纸边由深到无的暗部，
+ * 外加一条极细的折痕线。它必须待在**页面自己的矩形里**，并且贴着页面真正的
+ * 内边缘 —— 不能是一条跨在两页之上、位置与纸边无关的独立竖带。
+ *
+ * 早先的做法是：书脊是一条 `width: 74` 的整页高渐变，挂在 z-index 50 的
+ * 兄弟层上，从 `width - 30` 起跨过两页。它的几何与任何一张纸都没有关系，
+ * 于是中缝看起来就是「第三张纸」。（用 `size.width - 30` 取值还有一处笔误：
+ * 74 宽的元素起点在 W−30，终点在 W+44，**中心落在 W+7，而不是书脊 W+GAP/2**，
+ * 整条暗带因此偏向右侧页内 5px 以上。）
+ */
+const FOLD_BAND = 34
+
+/**
+ * 页面内缘的折痕。
+ *
+ * 渲染在**页面容器内部**，所以它天然跟随该页的一切变换 —— 静止时贴在同一张
+ * 纸上，翻页时随纸叶一起走。这一点很关键：早先那条跨页的独立竖带既不跟随
+ * 左页也不跟随右页，翻页途中就成了一个与运动无关的、浮在书上的灰黑色块。
+ */
+function PageFoldShade({ side, height }: { side: 'left' | 'right'; height: number }) {
+  /**
+   * 渐变方向：从左页看，暗部在内缘（右侧）；从右页看，暗部在内缘（左侧）。
+   * 起点就是纸边本身，所以「哪条边有阴影」与「纸到哪里结束」永远一致。
+   */
+  const towardInner = side === 'left' ? 'to left' : 'to right'
+  const edge = side === 'left' ? 'right' : 'left'
+  const anchor = { [edge]: 0 } as CSSProperties
+
+  return (
+    <div
+      className="pointer-events-none absolute top-0"
+      data-fold={side}
+      style={{
+        width: FOLD_BAND,
+        height,
+        ...anchor,
+        background: `linear-gradient(${towardInner}, rgba(30,24,16,0.40) 0%, rgba(30,24,16,0.19) 15%, rgba(30,24,16,0.06) 46%, rgba(30,24,16,0) 100%)`,
+        zIndex: 30,
+      }}
+    >
+      {/* 折痕本体：只有 5 页px 宽，紧贴纸边 */}
+      <div
+        className="pointer-events-none absolute inset-y-0"
+        style={{
+          width: 5,
+          ...anchor,
+          background: `linear-gradient(${towardInner}, rgba(58,46,30,0.30) 0%, rgba(58,46,30,0.11) 22%, rgba(58,46,30,0) 100%)`,
+        }}
+      />
+      {/* 纸边倒角的一丁点高光，让折痕「立」起来而不是一条脏边 */}
+      <div
+        className="pointer-events-none absolute inset-y-0"
+        style={{
+          width: 2,
+          ...anchor,
+          background: `linear-gradient(${towardInner}, rgba(255,252,244,0.30) 0%, rgba(255,252,244,0) 100%)`,
+        }}
+      />
+    </div>
+  )
+}
+
 
 /**
  * 为什么不画「书口露出的下层纸边」。
@@ -345,6 +423,27 @@ function BookSpreadImpl({
           className="absolute inset-0"
           style={{ transformStyle: 'preserve-3d' }}
         >
+          {/*
+            ── 装订缝：两页之间那条**真实的缝** ──────────────────────
+            它由「页面的厚度侧面 + 下面这层窄缝」共同形成 ——
+            两页各自的厚度切面在缝隙两侧各立起 10 页px，中间露出这层暗色。
+            缝的渐变从中心向两侧收，所以看起来是两张纸往书脊里陷进去，
+            而不是页面上压了一条东西。它画在页面之下（zIndex 1），
+            纸张一盖上去就只剩缝里露出的那一条。
+          */}
+          <div
+            className="pointer-events-none absolute top-0"
+            data-gutter=""
+            style={{
+              left: size.width - 8,
+              width: BOOK_GAP + 16,
+              height: size.height,
+              zIndex: 1,
+              background:
+                'linear-gradient(90deg, rgba(0,0,0,0) 0%, rgba(26,21,15,0.62) 30%, rgba(8,6,4,0.88) 50%, rgba(26,21,15,0.62) 70%, rgba(0,0,0,0) 100%)',
+            }}
+          />
+
           {/* 当前跨页的两块纸板 */}
           <div
             className="absolute top-0"
@@ -361,6 +460,9 @@ function BookSpreadImpl({
             ) : (
               <div className="absolute inset-0">{emptySlot}</div>
             )}
+
+            {/* 左页内缘的折痕：在页面自己的矩形里，贴着真正的纸边 */}
+            <PageFoldShade side="left" height={size.height} />
 
             {/* 翻动纸板投在左页上的阴影 */}
             <div
@@ -387,6 +489,9 @@ function BookSpreadImpl({
             ) : (
               <div className="absolute inset-0">{emptySlot}</div>
             )}
+
+            {/* 右页内缘的折痕：同样贴在右页自己的左边 */}
+            <PageFoldShade side="right" height={size.height} />
 
             {/* 翻动纸板投在右页上的阴影 */}
             <div
@@ -421,49 +526,24 @@ function BookSpreadImpl({
       )}
 
       {/*
-        ── 书脊与装订缝：必须画在**纸叶之上** ────────────────────────
-        这里踩过一个很隐蔽的坑。它们原本和页面一起放在书本容器里（z-index 20/21），
-        而纸叶是另一个兄弟容器（z-index 40）—— 于是**纸叶把书脊阴影盖住了**：
+        ── 关于书脊：为什么这里**不再有**一层跨页的「书脊渐变」 ──────
+        这里原本挂着一个 z-index 50 的兄弟层，里面是一条 `width: 74`、
+        整页高的渐变，从 `size.width - 30` 起跨在两页之上。它带来三类问题：
 
-          · 翻页途中，纸叶落在哪一侧，那一侧页面上的书脊阴影就被压掉；
-          · 落平帧纸叶被卸载，阴影「啪」地又回到页面上。
+          1. 它不属于任何一张纸（既不跟随左页也不跟随右页），
+             于是中缝看起来像「第三张纸」/ 一个独立叠加的 DOM 层；
+          2. 起点 W−30、宽 74，让它有 30px 压在左页、44px 压在右页，
+             **左右并不对称**，最深的那条暗带落在右页正文起始处，
+             而不是落在折痕上；
+          3. 它压在纸叶之上，所以翻页途中它始终是一条与运动无关的灰黑色块。
 
-        实测这让「最后一帧 → 落平帧」在页面内侧多出一条贯穿整页高的竖带差异
-        （宽约 22 屏幕px，正好是书脊渐变压在页面上的那一段），
-        也就是「书脊这两个地方翻完还是会变一下」。
+        现在书脊由三样东西共同构成，且都**归属明确**：
+          · 每页内缘的折痕（PageFoldShade）—— 长在页面自己的矩形里，跟着页面走；
+          · 两页之间的装订缝（data-gutter）—— 一条真正的窄缝，画在页面之下；
+          · 纸叶抬起时投在页面上的动态阴影（上面那两层）。
 
-        所以把这两层提到纸叶之上：它们是**书的凹槽**，不是某一页的内容，
-        任何时刻都该待在同一个位置、压在所有纸之上。
+        于是中缝是「两张纸向书脊里陷进去」，而不是「页面上压了一条东西」。
       */}
-      <div
-        className="pointer-events-none absolute inset-0"
-        data-spine=""
-        style={{ perspective: 3400, perspectiveOrigin: '50% 44%', zIndex: 50 }}
-      >
-        {/* 书脊 */}
-        <div
-          className="pointer-events-none absolute top-0"
-          style={{
-            left: size.width - 30,
-            width: 74,
-            height: size.height,
-            background:
-              'linear-gradient(90deg, rgba(0,0,0,0.34) 0%, rgba(0,0,0,0.13) 32%, rgba(0,0,0,0.02) 50%, rgba(0,0,0,0.13) 68%, rgba(0,0,0,0.34) 100%)',
-            transform: 'translateZ(1px)',
-          }}
-        />
-        {/* 装订缝：两页之间那条细黑线，让左右页明确分开 */}
-        <div
-          className="pointer-events-none absolute top-0"
-          style={{
-            left: size.width + BOOK_GAP / 2 - 0.75,
-            width: 1.5,
-            height: size.height,
-            backgroundColor: 'rgba(20,16,12,0.55)',
-            transform: 'translateZ(1px)',
-          }}
-        />
-      </div>
 
       {/* 纸板整体落地阴影（挂在最外层，避免 filter 拍平 3D） */}
       <div

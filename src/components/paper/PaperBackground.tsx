@@ -14,7 +14,13 @@ export interface PaperBackgroundProps {
   background: PageBackground
   width: number
   height: number
-  /** 页面在书里的位置，决定装订侧的暗部方向 */
+  /**
+   * 页面在书里的位置。
+   *
+   * 目前**不参与渲染** —— 纸张两侧的折痕由 BookSpread 的 PageFoldShade 负责，
+   * 因为只有页面容器知道纸边真正在哪里（还要考虑书脊侧切面与翻页旋转）。
+   * 这里保留字段是为了不破坏调用方签名，也给未来的「左侧纸纹理」留位置。
+   */
   side?: 'left' | 'right' | 'single'
   className?: string
   style?: CSSProperties
@@ -62,7 +68,7 @@ function PaperBackgroundImpl({
   background,
   width,
   height,
-  side = 'single',
+  side: _side,
   className,
   style,
 }: PaperBackgroundProps) {
@@ -85,13 +91,15 @@ function PaperBackgroundImpl({
         />
       )}
 
-      {/* 装订侧暗部：让纸有厚度 */}
-      {side === 'left' && (
-        <div className="book-spine-right pointer-events-none absolute inset-y-0 right-0 w-16" />
-      )}
-      {side === 'right' && (
-        <div className="book-spine-left pointer-events-none absolute inset-y-0 left-0 w-16" />
-      )}
+      {/*
+        注意：这里**不再**画装订侧暗部。
+
+        折痕必须贴着「纸张真正的内边缘」，而这条纸边只有页面容器自己知道
+        （还要考虑书脊侧切面、翻页时的旋转）。早先这里按 side 画过一条
+        `w-16` 的内侧暗部，同时 BookSpread 又叠了一条跨页的书脊渐变 ——
+        两条几何互不相干的暗带叠在一起，中缝就成了「第三张纸」。
+        现在统一由 BookSpread 的 PageFoldShade 负责，且长在页面自己的矩形里。
+      */}
 
       {/* 环境光：左上偏亮、右下偏暗 */}
       <div
