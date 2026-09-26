@@ -129,7 +129,6 @@ export interface EditorState {
 
   /* ---- 页面 ---- */
   setActivePage: (pageId: string) => void
-  setSpread: (primaryPageId: string, secondaryPageId: string | null) => void
   addPage: (opts?: { role?: PageRole; title?: string; afterPageId?: string; template?: Page }) => void
   duplicatePage: (pageId: string) => void
   removePage: (pageId: string) => void
@@ -137,7 +136,6 @@ export interface EditorState {
   updatePage: (pageId: string, patch: Partial<Page>, label: string) => void
   setPageBackground: (pageId: string, background: Page['background'], label: string) => void
   setAlbumMeta: (patch: Partial<Album>, label: string) => void
-  replacePages: (pages: Page[], label: string) => void
 
   /* ---- 视图 ---- */
   setZoom: (zoom: number) => void
@@ -160,11 +158,27 @@ export type LeftPanel = 'insert' | 'photos' | 'stickers' | 'text' | 'pages' | 't
  * ------------------------------------------------------------------ */
 
 /** 在指定页面上做不可变更新，未被修改的页面保持同一引用（结构共享） */
-function withPage(album: Album, pageId: string, fn: (page: Page) => Page): Album {
+/**
+ * 对「包含指定元素 id 的那些页面」做不可变更新。
+ *
+ * 为什么需要它：编辑器同时显示跨页的左右两页，但 `activePageId` 只有一个
+ * （永远是左槽，见 EditorPage 的 visiblePages）。若按 activePageId 写回，
+ * 用户在**右页**上拖动 / 缩放 / 删除元素时改动会被静默丢弃
+ * （找不到元素 → 返回同一引用 → store 返回 {}）。
+ * 元素 id 全局唯一，因此这里按 id 反查页面，左右页都能正确落盘。
+ */
+function withPagesOfElements(
+  album: Album,
+  elementIds: string[],
+  fn: (page: Page, ids: string[]) => Page,
+): Album {
+  if (!elementIds.length) return album
+  const wanted = new Set(elementIds)
   let changed = false
   const pages = album.pages.map((page) => {
-    if (page.id !== pageId) return page
-    const next = fn(page)
+    const ids = page.elements.filter((e) => wanted.has(e.id)).map((e) => e.id)
+    if (!ids.length) return page
+    const next = fn(page, ids)
     if (next !== page) changed = true
     return next
   })
@@ -637,13 +651,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   updateElements: (elementIds, updater, label) => {
-    const pageId = get().activePageId
+    if (!elementIds.length) return
     get().commit(label, (album) => {
-      const pageIndex = album.pages.findIndex((p) => p.id === pageId)
-      if (pageIndex === -1) return
-      const page = album.pages[pageIndex]
-      const next = mapElements(page, elementIds, updater)
-      if (next !== page) album.pages[pageIndex] = next
+      // 按元素 id 反查所在页：跨页布局下右页的元素也要能改
+      const next = withPagesOfElements(album, elementIds, (page, ids) =>
+        mapElements(page, ids, updater),
+      )
+      if (next !== album) {
+        album.pages = next.pages
+        album.updatedAt = next.updatedAt
+      }
     })
   },
 
@@ -659,10 +676,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
    */
   patchElements: (elementIds, patch, label) => {
     void label
+    if (!elementIds.length) return
     set((state) => {
       if (!state.album) return {}
-      const album = withPage(state.album, state.activePageId, (page) =>
-        mapElements(page, elementIds, (element) => ({ ...element, ...patch }) as AlbumElement),
+      const album = withPagesOfElements(state.album, elementIds, (page, ids) =>
+        mapElements(page, ids, (element) => ({ ...element, ...patch }) as AlbumElement),
       )
       return album === state.album ? {} : { album }
     })
@@ -672,10 +690,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     void label
     set((state) => {
       if (!state.album) return {}
-      const album = withPage(state.album, state.activePageId, (page) =>
+      const album = withPagesOfElements(state.album, [elementId], (page, ids) =>
         mapElements(
           page,
-          [elementId],
+          ids,
           (element) => ({ ...element, data: { ...element.data, ...patch } }) as AlbumElement,
         ),
       )
@@ -686,12 +704,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   removeElements: (elementIds) => {
     const ids = elementIds ?? get().selection
     if (!ids.length) return
-    const pageId = get().activePageId
+    const idSet = new Set(ids)
     get().commit('删除元素', (album) => {
-      const page = album.pages.find((p) => p.id === pageId)
-      if (!page) return
-      const idSet = new Set(ids)
-      page.elements = page.elements.filter((e) => !idSet.has(e.id))
+      // 从所有页面里删除（跨页多选时可能同时命中左右两页）
+      for (const page of album.pages) {
+        const next = page.elements.filter((e) => !idSet.has(e.id))
+        if (next.length !== page.elements.length) page.elements = next
+      }
     })
     set({ selection: [] })
   },
@@ -699,26 +718,34 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   duplicateElements: (elementIds) => {
     const ids = elementIds ?? get().selection
     if (!ids.length) return
-    const pageId = get().activePageId
-    const copies = cloneElements(
-      get()
-        .album?.pages.find((p) => p.id === pageId)
-        ?.elements.filter((e) => ids.includes(e.id)) ?? [],
-    )
-    if (!copies.length) return
-    get().commit('复制元素', (album) => {
-      const page = album.pages.find((p) => p.id === pageId)
-      if (!page) return
-      page.elements.push(...copies)
+    const album = get().album
+    if (!album) return
+    const idSet = new Set(ids)
+    // 每个元素复制到它自己所在的那一页，跨页多选也能各自落到对的位置
+    const groups: Array<{ pageId: string; copies: AlbumElement[] }> = []
+    for (const page of album.pages) {
+      const picked = page.elements.filter((e) => idSet.has(e.id))
+      if (picked.length) groups.push({ pageId: page.id, copies: cloneElements(picked) })
+    }
+    if (!groups.length) return
+    get().commit('复制元素', (draft) => {
+      for (const group of groups) {
+        const page = draft.pages.find((p) => p.id === group.pageId)
+        if (page) page.elements.push(...group.copies)
+      }
     })
-    set({ selection: copies.map((c) => c.id) })
+    set({ selection: groups.flatMap((g) => g.copies.map((c) => c.id)) })
   },
 
   copySelection: () => {
-    const { album, activePageId, selection } = get()
-    const page = album?.pages.find((p) => p.id === activePageId)
-    if (!page) return
-    const picked = page.elements.filter((e) => selection.includes(e.id))
+    const { album, selection } = get()
+    if (!album || !selection.length) return
+    const picked: AlbumElement[] = []
+    for (const page of album.pages) {
+      for (const element of page.elements) {
+        if (selection.includes(element.id)) picked.push(element)
+      }
+    }
     if (picked.length) set({ clipboard: deepClone(picked) })
   },
 
@@ -750,39 +777,39 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   toggleLock: (elementIds) => {
     const ids = elementIds ?? get().selection
     if (!ids.length) return
-    const pageId = get().activePageId
-    const page = get().album?.pages.find((p) => p.id === pageId)
-    if (!page) return
-    const anyUnlocked = page.elements.some((e) => ids.includes(e.id) && !e.locked)
-    get().commit(anyUnlocked ? '锁定元素' : '解锁元素', (album) => {
-      const target = album.pages.find((p) => p.id === pageId)
-      if (!target) return
-      target.elements = target.elements.map((e) =>
-        ids.includes(e.id) ? { ...e, locked: anyUnlocked } : e,
+    const album = get().album
+    if (!album) return
+    const idSet = new Set(ids)
+    let anyUnlocked = false
+    for (const page of album.pages) {
+      for (const element of page.elements) {
+        if (idSet.has(element.id) && !element.locked) anyUnlocked = true
+      }
+    }
+    get().commit(anyUnlocked ? '锁定元素' : '解锁元素', (draft) => {
+      const next = withPagesOfElements(draft, ids, (page, pageIds) =>
+        mapElements(page, pageIds, (element) => ({ ...element, locked: anyUnlocked })),
       )
+      if (next !== draft) draft.pages = next.pages
     })
   },
 
   nudge: (dx, dy) => {
     const ids = get().selection
     if (!ids.length) return
-    const pageId = get().activePageId
     get().commit('移动元素', (album) => {
-      const page = album.pages.find((p) => p.id === pageId)
-      if (!page) return
-      const idSet = new Set(ids)
-      page.elements = page.elements.map((e) =>
-        idSet.has(e.id) && !e.locked ? { ...e, x: e.x + dx, y: e.y + dy } : e,
+      const next = withPagesOfElements(album, ids, (page, pageIds) =>
+        mapElements(page, pageIds, (element) =>
+          element.locked ? element : { ...element, x: element.x + dx, y: element.y + dy },
+        ),
       )
+      if (next !== album) album.pages = next.pages
     })
   },
 
   /* ------------------------------------------------------------ 页面 */
 
   setActivePage: (pageId) => set({ activePageId: pageId, selection: [] }),
-
-  setSpread: (primaryPageId, secondaryPageId) =>
-    set({ activePageId: primaryPageId, spreadSecondPageId: secondaryPageId }),
 
   addPage: (opts = {}) => {
     const album = get().album
@@ -896,13 +923,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     })
   },
 
-  replacePages: (pages, label) => {
-    get().commit(label, (album) => {
-      album.pages = pages
-    })
-    set({ activePageId: pages[0]?.id ?? '', selection: [] })
-  },
-
   /* ------------------------------------------------------------ 视图 */
 
   setZoom: (zoom) => set({ zoom: Math.max(0.2, Math.min(2, zoom)) }),
@@ -990,12 +1010,14 @@ function reorder(
 ): void {
   const ids = elementIds ?? get().selection
   if (!ids.length) return
-  const pageId = get().activePageId
 
   get().commit(label, (album) => {
-    const page = album.pages.find((p) => p.id === pageId)
-    if (!page) return
-    page.elements = reorderElements(page.elements, ids, mode)
+    // 层级是「页内」概念：每个元素在它自己所在的那一页里调整
+    const next = withPagesOfElements(album, ids, (page, pageIds) => {
+      const elements = reorderElements(page.elements, pageIds, mode)
+      return elements === page.elements ? page : { ...page, elements }
+    })
+    if (next !== album) album.pages = next.pages
   })
 }
 

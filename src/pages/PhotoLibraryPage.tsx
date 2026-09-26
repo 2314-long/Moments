@@ -11,6 +11,7 @@ import {
   Upload,
 } from 'lucide-react'
 import { usePhotoStore } from '@/store/photoStore'
+import { useLibraryStore } from '@/store/libraryStore'
 import { deletePhoto, uploadPhotos } from '@/services/uploadService'
 import { DropZone } from '@/components/upload/DropZone'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -59,13 +60,54 @@ export function PhotoLibraryPage() {
   }
 
   async function handleDeleteSelected() {
+    let affectedAlbums = 0
     for (const id of selected) {
-      await deletePhoto(id)
+      affectedAlbums += await deletePhoto(id)
     }
-    show(`已删除 ${selected.length} 张照片`)
+    show(
+      affectedAlbums
+        ? `已删除 ${selected.length} 张照片，并清理了 ${affectedAlbums} 本纪念册里的引用`
+        : `已删除 ${selected.length} 张照片`,
+    )
     setSelected([])
     setSelecting(false)
     setConfirmDelete(false)
+  }
+
+  /**
+   * 删除单张照片。
+   *
+   * 之前这里既没有确认、键盘路径也没有任何提示，而且照片可能正被某本
+   * 纪念册使用 —— 删掉之后那些页面只会渲染成灰底占位图。现在先告诉用户
+   * 有哪些册子在用，并在删除后如实报告清理结果。
+   */
+  async function handleDeleteOne(photoId: string) {
+    const users = useLibraryStore
+      .getState()
+      .albums.filter(
+        (album) =>
+          album.photoIds.includes(photoId) ||
+          album.pages.some((page) =>
+            page.elements.some(
+              (element) =>
+                element.kind === 'photo' &&
+                (element.data as { photoId?: string }).photoId === photoId,
+            ),
+          ),
+      )
+    if (users.length) {
+      const names = users.slice(0, 3).map((a) => `《${a.title}》`).join('、')
+      const more = users.length > 3 ? ` 等 ${users.length} 本` : ''
+      const ok = window.confirm(
+        `这张照片正在被 ${names}${more} 使用。\n删除后这些页面上的照片会被一并移除，无法恢复。确定删除吗？`,
+      )
+      if (!ok) return
+    }
+    const affected = await deletePhoto(photoId)
+    show(
+      affected ? `已删除照片，并清理了 ${affected} 本纪念册里的引用` : '已删除照片',
+      { tone: affected ? 'success' : 'default' },
+    )
   }
 
   return (
@@ -161,28 +203,35 @@ export function PhotoLibraryPage() {
             {filtered.map((asset) => {
               const isSelected = selected.includes(asset.id)
               return (
-                <button
+                // 用 div 承载定位，删除按钮是它的兄弟节点而不是嵌套在
+                // <button> 里（嵌套交互元素在 ARIA 上是非法的，键盘也会错乱）
+                <div
                   key={asset.id}
-                  onClick={() => {
-                    if (!selecting) return
-                    setSelected((prev) =>
-                      prev.includes(asset.id)
-                        ? prev.filter((id) => id !== asset.id)
-                        : [...prev, asset.id],
-                    )
-                  }}
                   className={`group relative overflow-hidden rounded-xl bg-ink-800 text-left transition-all ${
                     isSelected ? 'ring-2 ring-clay-500' : 'ring-1 ring-white/[0.06] hover:ring-white/20'
                   }`}
                   style={{ aspectRatio: '1 / 1' }}
                 >
-                  <img
-                    src={asset.url}
-                    alt={asset.name ?? ''}
-                    loading="lazy"
-                    draggable={false}
-                    className="h-full w-full object-cover"
-                  />
+                  <button
+                    className="absolute inset-0 h-full w-full"
+                    onClick={() => {
+                      if (!selecting) return
+                      setSelected((prev) =>
+                        prev.includes(asset.id)
+                          ? prev.filter((id) => id !== asset.id)
+                          : [...prev, asset.id],
+                      )
+                    }}
+                    aria-label={asset.name ?? '未命名照片'}
+                  >
+                    <img
+                      src={asset.url}
+                      alt={asset.name ?? ''}
+                      loading="lazy"
+                      draggable={false}
+                      className="h-full w-full object-cover"
+                    />
+                  </button>
 
                   {/* 信息条 */}
                   <span className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col gap-0.5 bg-gradient-to-t from-black/75 to-transparent p-2 opacity-0 transition-opacity group-hover:opacity-100">
@@ -199,31 +248,23 @@ export function PhotoLibraryPage() {
                   </span>
 
                   {isSelected && (
-                    <span className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-clay-500">
+                    <span className="pointer-events-none absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-clay-500">
                       <CheckSquare className="h-3 w-3 text-white" />
                     </span>
                   )}
 
                   {!selecting && asset.source !== 'demo' && (
-                    <span
-                      role="button"
-                      tabIndex={0}
-                      className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-lg bg-ink-900/80 text-ink-300 opacity-0 transition-all hover:bg-clay-600 hover:text-white group-hover:opacity-100"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        void deletePhoto(asset.id)
-                        show('已删除照片')
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.stopPropagation()
-                          void deletePhoto(asset.id)
-                        }
+                    <button
+                      type="button"
+                      className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-lg bg-ink-900/80 text-ink-300 opacity-0 transition-all hover:bg-clay-600 hover:text-white focus-visible:opacity-100 group-hover:opacity-100"
+                      onClick={() => {
+                        void handleDeleteOne(asset.id)
                       }}
                       title="删除这张照片"
+                      aria-label={`删除照片 ${asset.name ?? ''}`}
                     >
                       <Trash2 className="h-3 w-3" />
-                    </span>
+                    </button>
                   )}
 
                   {asset.source === 'demo' && (
@@ -231,7 +272,7 @@ export function PhotoLibraryPage() {
                       示例
                     </span>
                   )}
-                </button>
+                </div>
               )
             })}
           </div>

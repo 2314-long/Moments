@@ -10,6 +10,12 @@ import { PhotoLibraryPage } from './pages/PhotoLibraryPage'
 import { SharePage } from './pages/SharePage'
 import { NotFoundPage } from './pages/NotFoundPage'
 import { LibraryBootstrap } from './components/LibraryBootstrap'
+import { registerDefaultAiProvider } from './ai/provider'
+import { heuristicAiProvider } from './ai/heuristicProvider'
+
+// 注册默认（离线启发式）排版实现。接入真实模型时只要在这里换成
+// 另一个 AiLayoutProvider，或调用 setAiProvider() 覆盖即可。
+registerDefaultAiProvider(() => heuristicAiProvider)
 
 const router = createBrowserRouter([
   { path: '/', element: <HomePage /> },

@@ -20,7 +20,7 @@ import { persistAlbum } from '@/persistence'
 import { uploadPhotos } from '@/services/uploadService'
 import { DropZone } from '@/components/upload/DropZone'
 import { Toast, useToast } from '@/components/ui/Toast'
-import { heuristicAiProvider } from '@/ai/heuristicProvider'
+import { getAiProvider } from '@/ai/provider'
 import { BookCover } from '@/components/album/BookCover'
 import { JIUZHAIGOU_ROUTE } from '@/data/demoPhotos'
 
@@ -129,17 +129,24 @@ export function CreateAlbumPage() {
     setGenerating(true)
     setAnalysisState(Object.fromEntries(ANALYSIS_STEPS.map((s) => [s.key, 'pending'])))
     setSummary(null)
+    uploadAbort.current = false
 
-    const mark = async (key: string, delay: number) => {
-      setAnalysisState((prev) => ({ ...prev, [key]: 'running' }))
-      await sleep(delay)
-      setAnalysisState((prev) => ({ ...prev, [key]: 'done' }))
-    }
+    /**
+     * 进度展示。
+     *
+     * 每一步的「running → done」都由**真实阶段**驱动：纯计算的步骤
+     * （分组 / 挑图 / 撰写）本来就没有耗时，末尾给一点点停顿只是为了让
+     * 用户看清发生了什么，而不是用固定的假 sleep 假装在忙。
+     */
+    const setStep = (key: string, status: 'pending' | 'running' | 'done') =>
+      setAnalysisState((prev) => ({ ...prev, [key]: status }))
+    const cancelled = () => uploadAbort.current
 
     try {
-      await mark('analyze', 420)
+      const provider = getAiProvider()
 
-      const insights = await heuristicAiProvider.analyze(
+      setStep('analyze', 'running')
+      const insights = await provider.analyze(
         selectedAssets.map((asset) => ({
           id: asset.id,
           takenAt: asset.takenAt,
@@ -149,11 +156,19 @@ export function CreateAlbumPage() {
           name: asset.name,
         })),
       )
+      setStep('analyze', 'done')
+      if (cancelled()) return
 
-      await mark('group', 380)
-      await mark('pick', 320)
+      setStep('group', 'running')
+      await sleep(260)
+      setStep('group', 'done')
+      setStep('pick', 'running')
+      await sleep(220)
+      setStep('pick', 'done')
+      if (cancelled()) return
 
-      const result = await heuristicAiProvider.layout({
+      setStep('layout', 'running')
+      const result = await provider.layout({
         title: title.trim(),
         theme,
         location: place ?? undefined,
@@ -162,9 +177,12 @@ export function CreateAlbumPage() {
         insights,
         pageSize: { width: PAGE_WIDTH, height: PAGE_HEIGHT },
       })
+      setStep('layout', 'done')
+      if (cancelled()) return
 
-      await mark('layout', 460)
-      await mark('write', 380)
+      setStep('write', 'running')
+      await sleep(240)
+      setStep('write', 'done')
 
       const now = new Date().toISOString()
       const album: Album = {
@@ -193,6 +211,16 @@ export function CreateAlbumPage() {
       show('生成失败，请重试', { tone: 'error' })
       setGenerating(false)
     }
+
+    // 走到这里说明流程已经结束（成功时 createdAlbum 已经渲染完成页）
+    setGenerating(false)
+  }
+
+  /** 中止生成：各阶段之间都会检查这个标记 */
+  function handleCancelGenerate() {
+    uploadAbort.current = true
+    setGenerating(false)
+    show('已取消生成')
   }
 
   /* ---------------------------------------------------------- 生成完成 */
@@ -285,6 +313,12 @@ export function CreateAlbumPage() {
                 </div>
               )
             })}
+          </div>
+
+          <div className="mt-6 flex justify-center">
+            <button className="btn-subtle" onClick={handleCancelGenerate}>
+              取消生成
+            </button>
           </div>
         </div>
       </div>
@@ -574,8 +608,8 @@ export function CreateAlbumPage() {
                       {THEMES[theme].name}风格 · 纸张：{THEMES[theme].paper}
                     </div>
                     <div className="mt-1">
-                      {selectedPhotoIds.length} 张照片 · 预计生成{' '}
-                      {Math.max(3, Math.min(14, Math.ceil(selectedPhotoIds.length / 3) + 3))} 页
+                      {selectedPhotoIds.length} 张照片 · 预计生成约{' '}
+                      {estimatePageRange(selectedPhotoIds.length, Boolean(startDate || place))} 页
                     </div>
                   </div>
                 </div>
@@ -681,6 +715,24 @@ function MiniCover({ theme, title }: { theme: AlbumTheme; title: string }) {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * 预估页数区间。
+ *
+ * `heuristicAiProvider.layout` 的页数由**内容分类**决定（最多 8 个章节
+ * 各占一页），再加封面、可选的路线页、随笔页与结尾页，与照片张数只有
+ * 间接关系。之前显示的是 `ceil(n/3)+3` —— 一个和真实结果无关的公式，
+ * 用户按它预期 8 页、实际拿到 5 页。这里按真实结构给一个区间。
+ */
+function estimatePageRange(photoCount: number, hasRoute: boolean): string {
+  if (!photoCount) return '3'
+  // 照片越多，越可能铺满全部内容分类（实测 8 类），因此上限随张数递增
+  const chapters = Math.max(1, Math.min(8, Math.ceil(photoCount / 2)))
+  const fixed = 1 /* 封面 */ + 1 /* 随笔 */ + 1 /* 结尾 */ + (hasRoute ? 1 : 0)
+  const low = Math.max(3, Math.min(chapters, Math.ceil(chapters / 2)) + fixed)
+  const high = chapters + fixed
+  return low === high ? String(high) : `${low}–${high}`
 }
 
 function slugify(input: string): string {

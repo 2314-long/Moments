@@ -75,7 +75,20 @@ export function usePhotosReady(assets: PhotoAsset[]): boolean {
   const key = `${assets.length}:${assets[0]?.id ?? ''}:${assets[assets.length - 1]?.id ?? ''}`
 
   useEffect(() => {
-    if (ready) return
+    /**
+     * 这里不能写 `if (ready) return`。
+     *
+     * 冷启动 / 深链直接打开阅读页时，照片元数据（`usePhotoStore.byId`）可能
+     * 还没从 IndexedDB 读完，于是 `assets` 是**空数组**，而空数组的
+     * `every(...)` 恒为 true —— 组件会带着 `ready = true` 直接渲染，
+     * 之后再也不会重新解析，上传的照片就会先画成灰底占位图。
+     * 现在每次 assets 变化都重新评估：已就绪就保持，未就绪就解析。
+     */
+    if (assets.every((asset) => !asset.storageKey || peekAssetUrl(asset) !== null)) {
+      setReady(true)
+      return
+    }
+    setReady(false)
     let cancelled = false
     void preloadPhotoUrls(assets).then(() => {
       if (!cancelled) setReady(true)
@@ -85,7 +98,7 @@ export function usePhotosReady(assets: PhotoAsset[]): boolean {
     }
     // key 已经概括了 assets 的身份，避免依赖每次新建的数组本身
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, key])
+  }, [key])
 
   return ready
 }

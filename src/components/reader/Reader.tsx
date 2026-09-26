@@ -140,17 +140,15 @@ function useFlipDriver(options: {
   const rafRef = useRef<number | null>(null)
   const busyRef = useRef(false)
   const dragRef = useRef<{ direction: 'next' | 'prev'; progress: number } | null>(null)
+  /** 当前纸叶状态的可读副本，供 rAF 回调读取（避免闭包读到过期值） */
+  const flipRef = useRef<FlipState | null>(null)
+  flipRef.current = flip
 
   const stopRaf = useCallback(() => {
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
     rafRef.current = null
   }, [])
 
-  /**
-   * 提交：先让纸板落到最终角度，再在**同一个 rAF 回调**里切换逻辑页。
-   * React 会把这两次 setState 批处理进同一次提交，
-   * 因此不存在「旧页没了、新页还没来」的中间帧。
-   */
   /**
    * 落平后再提交。
    *
@@ -161,19 +159,22 @@ function useFlipDriver(options: {
    *
    * 所以这里先额外渲染一帧「角度正好 180°」（progress = 1），
    * 让纸叶背面与接替它的静止页完全重合，下一帧再真正切换逻辑页。
+   *
+   * 提交目标**只从 flip.toIndex 读**，不接受调用方传参：落平帧渲染的是
+   * `flip.toIndex` 那一屏，如果 commit 用别的值（拖拽途中被键盘/滚轮
+   * 改写过方向，或者动画途中点了进度圆点），就会出现「落平帧显示 A、
+   * 下一帧变成 B」的跳变 —— 正是这套设计要消灭的东西。
    */
-  const settleThenCommit = useCallback(
-    (toIndex: number) => {
-      setFlip((current) => (current ? { ...current, progress: 1 } : current))
-      rafRef.current = requestAnimationFrame(() => {
-        rafRef.current = null
-        busyRef.current = false
-        setFlip(null)
-        onCommit(toIndex)
-      })
-    },
-    [onCommit],
-  )
+  const settleThenCommit = useCallback(() => {
+    const target = flipRef.current?.toIndex
+    setFlip((current) => (current ? { ...current, progress: 1 } : current))
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null
+      busyRef.current = false
+      setFlip(null)
+      if (typeof target === 'number') onCommit(target)
+    })
+  }, [onCommit])
 
   /** 弹回原位：同样要多渲染一帧「完全回到 0°」再卸下纸叶 */
   const settleThenClear = useCallback(() => {
@@ -188,8 +189,10 @@ function useFlipDriver(options: {
   /** 播放完整翻页 */
   const animate = useCallback(
     (direction: 'next' | 'prev') => {
-      // 动画进行中禁止重复触发
-      if (busyRef.current) return
+      // 动画进行中、或用户正用手指拖着纸叶时，不接受新的翻页指令 ——
+      // 否则纸叶的 direction/toIndex 会被改写，而松手时提交的是
+      // dragRef 里的方向，落平帧与提交帧就会对不上（一帧闪现错误跨页）
+      if (busyRef.current || dragRef.current) return
       const toIndex = direction === 'next' ? spreadIndex + 1 : spreadIndex - 1
       if (toIndex < 0 || toIndex >= spreadCount) return
 
@@ -209,7 +212,7 @@ function useFlipDriver(options: {
         if (t < 1) {
           rafRef.current = requestAnimationFrame(step)
         } else {
-          settleThenCommit(toIndex)
+          settleThenCommit()
         }
       }
       rafRef.current = requestAnimationFrame(step)
@@ -220,6 +223,8 @@ function useFlipDriver(options: {
   /** 拖拽松手后继续翻完（从当前进度接着走，不重新开始） */
   const finish = useCallback(
     (direction: 'next' | 'prev', fromProgress: number) => {
+      // 拖拽期间禁止其它入口改动 spreadIndex / flip.direction，
+      // 所以这里用 drag 的方向推导目标即可（与 flip.toIndex 一致）
       const toIndex = direction === 'next' ? spreadIndex + 1 : spreadIndex - 1
       if (toIndex < 0 || toIndex >= spreadCount) return
       const startProgress = Math.max(0, Math.min(1, fromProgress))
@@ -235,7 +240,7 @@ function useFlipDriver(options: {
         if (t < 1) {
           rafRef.current = requestAnimationFrame(step)
         } else {
-          settleThenCommit(toIndex)
+          settleThenCommit()
         }
       }
       rafRef.current = requestAnimationFrame(step)
@@ -374,10 +379,19 @@ export function Reader({ album, initialIndex = 0, onIndexChange }: ReaderProps) 
    * 纸板的正反面各会渲染一份页面内容，因此**必须**在翻页开始之前
    * 把照片地址全部解析完。这里在阅读器挂载时就预解析整本的地址。
    */
-  const albumAssets = useMemo<PhotoAsset[]>(() => {
-    const byId = usePhotoStore.getState().byId
-    return album.photoIds.map((id) => byId[id]).filter((a): a is PhotoAsset => Boolean(a))
-  }, [album.photoIds])
+  /**
+   * 纸板的正反面各会渲染一份页面内容，因此**必须**在翻页开始之前
+   * 把照片地址全部解析完。这里在阅读器挂载时就预解析整本的地址。
+   *
+   * 注意 `byId` 要通过**订阅**拿到（而不是 getState() 快照）：
+   * 冷启动时素材库还在从 IndexedDB 读元数据，快照会一直停在空对象，
+   * 于是 albumAssets 恒为空、预解析形同虚设，上传的照片仍会先画灰底。
+   */
+  const photoById = usePhotoStore((state) => state.byId)
+  const albumAssets = useMemo<PhotoAsset[]>(
+    () => album.photoIds.map((id) => photoById[id]).filter((a): a is PhotoAsset => Boolean(a)),
+    [album.photoIds, photoById],
+  )
   const photosReady = usePhotosReady(albumAssets)
 
   /** 整本书的宽度，用于把拖拽距离换算成翻页进度 */
@@ -388,6 +402,8 @@ export function Reader({ album, initialIndex = 0, onIndexChange }: ReaderProps) 
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      // 长按会连发 repeat，翻页是 900ms 的动画，重复触发没有意义
+      if (event.repeat) return
       if (event.key === 'ArrowRight' || event.key === ' ' || event.key === 'PageDown') {
         event.preventDefault()
         animate('next')
@@ -405,23 +421,52 @@ export function Reader({ album, initialIndex = 0, onIndexChange }: ReaderProps) 
   const wheelLock = useRef(0)
   const onWheel = useCallback(
     (event: React.WheelEvent) => {
+      if (Math.abs(event.deltaY) < 12) return
       const now = performance.now()
       if (now - wheelLock.current < 520) return
-      if (Math.abs(event.deltaY) < 12) return
+      // 动画期间直接返回、**不占用节流锁**：否则这次滚动既被丢弃、
+      // 又把锁推到下一段 520ms，用户会觉得「滚了一下没反应」
+      if (busyRef.current) return
       wheelLock.current = now
       animate(event.deltaY > 0 ? 'next' : 'prev')
     },
-    [animate],
+    [animate, busyRef],
   )
 
+  /* ------------------------------------------------ UI 自动隐藏 */
+
+  /** 闲置定时器：鼠标移动会重置它，闲置 2.6 秒后收起顶栏与底部进度 */
+  const uiTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (!showUi) return
+    if (uiTimer.current) clearTimeout(uiTimer.current)
+    uiTimer.current = setTimeout(() => setShowUi(false), 2600)
+    return () => {
+      if (uiTimer.current) clearTimeout(uiTimer.current)
+      uiTimer.current = null
+    }
+  }, [showUi])
+
   const dragStart = useRef<{ x: number; y: number; t: number; active: boolean } | null>(null)
+  /** 拖着纸叶的那个指针 id，用于 setPointerCapture */
+  const dragPointerId = useRef<number | null>(null)
 
-  const onPointerDown = useCallback((event: React.PointerEvent) => {
-    dragStart.current = { x: event.clientX, y: event.clientY, t: performance.now(), active: false }
-  }, [])
+  /**
+   * 指针三件套挂在 **window** 上，而不是 Reader 根节点。
+   *
+   * 拖动时指针很容易滑出书页、甚至落在阅读页右上角的浮动工具栏上；
+   * 如果只监听根节点，pointerup 不会派发到 Reader，于是
+   * `endDrag` 永不执行 —— 纸叶会卡在中间进度，左右翻页按钮也一直禁用。
+   */
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      // 只响应主键：右键 / 中键不该翻页
+      if (event.button !== 0) return
+      dragStart.current = { x: event.clientX, y: event.clientY, t: performance.now(), active: false }
+    }
 
-  const onPointerMove = useCallback(
-    (event: React.PointerEvent) => {
+    const onPointerMove = (event: PointerEvent) => {
       const start = dragStart.current
       if (!start) return
       const dx = event.clientX - start.x
@@ -433,23 +478,30 @@ export function Reader({ album, initialIndex = 0, onIndexChange }: ReaderProps) 
           dragStart.current = null
           return
         }
+        // reduced-motion 下不播放 3D 滑动（前庭不适），但**不能什么都不做**：
+        // 之前 beginDrag 直接返回 false 并清空 dragStart，连下面的
+        // 「快速划动」兜底也一起失效，触屏用户在减弱动效时完全翻不了页。
+        if (reducedMotion) {
+          dragStart.current = null
+          animate(dx < 0 ? 'next' : 'prev')
+          return
+        }
         if (!beginDrag(dx < 0 ? 'next' : 'prev')) {
           dragStart.current = null
           return
         }
         start.active = true
+        dragPointerId.current = event.pointerId
       }
 
       const travel = spreadWidthRef.current || 800
-      updateDrag((Math.abs(dx) / travel) / 0.55)
-    },
-    [beginDrag, updateDrag],
-  )
+      updateDrag(Math.abs(dx) / travel / 0.55)
+    }
 
-  const onPointerUp = useCallback(
-    (event: React.PointerEvent) => {
+    const onPointerUp = (event: PointerEvent) => {
       const start = dragStart.current
       dragStart.current = null
+      dragPointerId.current = null
       if (!start) return
       if (start.active) {
         endDrag()
@@ -458,9 +510,19 @@ export function Reader({ album, initialIndex = 0, onIndexChange }: ReaderProps) 
       const dx = event.clientX - start.x
       const dt = performance.now() - start.t
       if (dt < 700 && Math.abs(dx) > 60) animate(dx < 0 ? 'next' : 'prev')
-    },
-    [animate, endDrag],
-  )
+    }
+
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', onPointerUp)
+    window.addEventListener('pointercancel', onPointerUp)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', onPointerUp)
+      window.removeEventListener('pointercancel', onPointerUp)
+    }
+  }, [animate, beginDrag, endDrag, reducedMotion, updateDrag])
 
   /* ---------------------------------------------------------- 拖拽定格（开发期） */
 
@@ -469,9 +531,9 @@ export function Reader({ album, initialIndex = 0, onIndexChange }: ReaderProps) 
    *
    *  - `?flip=next&hold=0.5`：把纸板**定格**在指定进度。用来验证单帧几何
    *    （3D 有没有被拍平、纸板正反面朝向、镜像等）。
-   *  - `?sampleAt=24`：模拟一次**真实动画**并停在第 N 帧。用来验证时序 ——
-   *    例如「页面是否在纸板落地前就切换」。定格做不到这件事，
-   *    因为定格的每一帧都是独立渲染的，看不到连续播放时的问题。
+   *  - `?sampleAt=24`：按 `easeSettle(N / 总帧数)` 把纸板定格在「真实动画
+   *    第 N 帧应当处于的进度」。注意它同样是**定格**，不播放动画，
+   *    因此验证的是单帧归属，不是真实时序。
    *
    * 用 useLayoutEffect 保证在浏览器绘制之前写入角度，截图才能抓到目标帧。
    */
@@ -519,13 +581,16 @@ export function Reader({ album, initialIndex = 0, onIndexChange }: ReaderProps) 
 
   const goToSpread = useCallback(
     (index: number) => {
-      if (busyRef.current || index === spreadIndex) return
+      // 动画中、或正拖着纸叶时都不允许跳页：拖拽期 busyRef 还是 false，
+      // 若不额外判断 dragging，改 spreadIndex 会让松手后的落点与
+      // flip.toIndex 不一致
+      if (busyRef.current || dragging || index === spreadIndex) return
       setSpreadIndex(index)
       const target = spreads[index]
       const pageIndex = target[1] ?? target[0]
       if (pageIndex !== null) onIndexChange?.(pageIndex)
     },
-    [busyRef, onIndexChange, spreadIndex, spreads],
+    [busyRef, dragging, onIndexChange, spreadIndex, spreads],
   )
 
   const getPage = useCallback(
@@ -592,15 +657,17 @@ export function Reader({ album, initialIndex = 0, onIndexChange }: ReaderProps) 
       className="relative flex h-full w-full flex-col items-center justify-center overflow-hidden"
       style={{ touchAction: 'pan-y', cursor: dragging ? 'grabbing' : 'default' }}
       onWheel={onWheel}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-      onMouseMove={() => setShowUi(true)}
+      onMouseMove={() => {
+        setShowUi(true)
+        if (uiTimer.current) clearTimeout(uiTimer.current)
+        uiTimer.current = setTimeout(() => setShowUi(false), 2600)
+      }}
     >
-      {/* 顶部信息 */}
+      {/* 顶部信息。
+          左边的留白由外层通过 --reader-top-inset 传入：预览页在那里放了
+          「返回书架 / 继续编辑」两个浮动按钮，不避让的话会把书名压住。 */}
       <div
-        className={`pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between p-5 transition-opacity duration-500 ${
+        className={`pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between p-5 pl-[var(--reader-top-inset,1.25rem)] transition-opacity duration-500 ${
           showUi ? 'opacity-100' : 'opacity-0'
         }`}
       >

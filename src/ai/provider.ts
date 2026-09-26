@@ -57,3 +57,39 @@ export interface AiLayoutProvider {
   analyze(photos: Array<{ id: string; takenAt?: string; location?: GeoPoint; width: number; height: number; name?: string }>): Promise<PhotoInsight[]>
   layout(request: AiLayoutRequest): Promise<AiLayoutResult>
 }
+
+/* ------------------------------------------------------------------ *
+ * Provider 注册表
+ * ------------------------------------------------------------------ */
+
+/**
+ * 当前生效的排版实现。
+ *
+ * 之所以要有这一层：之前 `CreateAlbumPage` 直接 import 了具体的
+ * `heuristicAiProvider`，于是「换成真实模型只改一个地方」这个承诺
+ * 在文档里成立、在代码里不成立（没有 setAiProvider 这个东西）。
+ * 现在 UI 只依赖注册表，接入多模态模型时只需要在启动处调用
+ * `setAiProvider(...)`（例如按环境变量 / 后端开关切换）。
+ */
+let currentProvider: AiLayoutProvider | null = null
+
+/** 延迟注入的默认实现，避免 provider 层反向依赖具体实现 */
+let fallbackLoader: (() => AiLayoutProvider) | null = null
+
+export function setAiProvider(provider: AiLayoutProvider): void {
+  currentProvider = provider
+}
+
+/** 注册「默认实现」的加载器（在应用入口调用一次即可） */
+export function registerDefaultAiProvider(loader: () => AiLayoutProvider): void {
+  fallbackLoader = loader
+}
+
+export function getAiProvider(): AiLayoutProvider {
+  if (currentProvider) return currentProvider
+  if (!fallbackLoader) {
+    throw new Error('尚未注册 AI 排版实现：请在应用入口调用 registerDefaultAiProvider()')
+  }
+  currentProvider = fallbackLoader()
+  return currentProvider
+}

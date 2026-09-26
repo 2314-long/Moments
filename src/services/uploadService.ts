@@ -1,9 +1,11 @@
-import type { PhotoAsset } from '@/types/album'
+import type { Album, PhotoAsset } from '@/types/album'
 import { getStorage } from '@/storage/storage'
 import { primeAssetUrl } from '@/storage/assetResolver'
 import { inspectFile } from '@/storage/upload'
 import { newAssetKey, newPhotoId } from '@/lib/id'
 import { usePhotoStore, readPhotoMeta, writePhotoMeta } from '@/store/photoStore'
+import { useLibraryStore } from '@/store/libraryStore'
+import { persistAlbum } from '@/persistence'
 
 /**
  * 照片上传管道。
@@ -89,11 +91,21 @@ export async function uploadPhotos(
   return { assets, failed }
 }
 
-/** 从素材库移除一张照片（同时清理二进制） */
-export async function deletePhoto(photoId: string): Promise<void> {
+/**
+ * 从素材库移除一张照片（同时清理二进制）。
+ *
+ * 会**级联清理**所有纪念册里对这张照片的引用：
+ *  - 元素（照片元素引用的 photoId）
+ *  - 纪念册的 photoIds 反向索引
+ * 否则册子里会留下指向不存在素材的图片元素 —— 编辑器与阅读器都只会
+ * 渲染灰底占位图，而且没有任何提示。
+ *
+ * 返回被影响的纪念册数量，供调用方提示用户。
+ */
+export async function deletePhoto(photoId: string): Promise<number> {
   const store = usePhotoStore.getState()
   const asset = store.byId[photoId]
-  if (!asset) return
+  if (!asset) return 0
 
   if (asset.storageKey) {
     try {
@@ -109,5 +121,38 @@ export async function deletePhoto(photoId: string): Promise<void> {
     await writePhotoMeta(remaining)
   } catch {
     /* 忽略 */
+  }
+
+  return purgePhotoFromAlbums(photoId)
+}
+
+/** 把某张照片从所有纪念册里摘掉，返回受影响的册数 */
+async function purgePhotoFromAlbums(photoId: string): Promise<number> {
+  const library = useLibraryStore.getState()
+  const affected = library.albums.filter((album) =>
+    album.photoIds.includes(photoId) ||
+    album.pages.some((page) => page.elements.some(isPhotoRef(photoId))),
+  )
+  if (!affected.length) return 0
+
+  for (const album of affected) {
+    await persistAlbum(cleanAlbumPhoto(album, photoId))
+  }
+  return affected.length
+}
+
+const isPhotoRef = (photoId: string) => (element: { kind: string; data: unknown }) =>
+  element.kind === 'photo' && (element.data as { photoId?: string }).photoId === photoId
+
+/** 生成一份「不再引用该照片」的纪念册副本 */
+export function cleanAlbumPhoto<T extends Album>(album: T, photoId: string): T {
+  return {
+    ...album,
+    photoIds: album.photoIds.filter((id) => id !== photoId),
+    pages: album.pages.map((page) => {
+      const elements = page.elements.filter((element) => !isPhotoRef(photoId)(element))
+      return elements.length === page.elements.length ? page : { ...page, elements }
+    }),
+    updatedAt: new Date().toISOString(),
   }
 }

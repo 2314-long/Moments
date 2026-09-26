@@ -31,20 +31,6 @@ export function frameBox(
   return { left: base, top: base, right: base, bottom }
 }
 
-/** 给定元素尺寸，算出照片实际显示区域的宽高 */
-export function innerSize(
-  style: PhotoStyle,
-  width: number,
-  height: number,
-  frameWidth?: number,
-): { width: number; height: number } {
-  const box = frameBox(style, width, height, frameWidth)
-  return {
-    width: Math.max(1, width - box.left - box.right),
-    height: Math.max(1, height - box.top - box.bottom),
-  }
-}
-
 /**
  * 新建照片元素时的默认尺寸：
  * 保持照片原始比例，并让长边落在给定范围内。

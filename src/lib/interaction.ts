@@ -199,6 +199,197 @@ export interface ResizeResult {
   positions: Map<string, { x: number; y: number; width: number; height: number }>
 }
 
+/** 本地坐标系（元素四边与坐标轴平行）中的一个矩形 + 它的中心 */
+interface LocalRect {
+  rect: Rect
+  centre: Vec2
+}
+
+/**
+ * 元素在**本地坐标系**里的矩形。
+ *
+ * `start.bounds` 是旋转后的轴对齐包围盒，不能直接当元素矩形用（AABB 的中心
+ * 与元素中心相同，但尺寸不同）。好在快照里已经带了元素**自己**的矩形
+ * （`start.elements[i].rect`），直接用它、只把中心换成本地中心即可 ——
+ * 这样尺寸永远精确，旋转只在「映射回世界坐标」那一步出现。
+ */
+function localRectOf(start: InteractionSnapshot): LocalRect {
+  const entry = start.elements[0]
+  const centre = rectCenter(start.bounds)
+  const width = entry.rect.width
+  const height = entry.rect.height
+  return {
+    rect: { x: centre.x - width / 2, y: centre.y - height / 2, width, height },
+    centre,
+  }
+}
+
+/**
+ * 单元素缩放。
+ *
+ * 思路：把初始 AABB 还原成**元素本地矩形**，在本地坐标系里按最朴素的
+ * 轴对齐逻辑算出新尺寸，最后再把新中心映射回世界坐标（连同
+ * `anchor + rotate(C − anchor, θ)` 的补偿），保证锚点在屏幕上纹丝不动。
+ *
+ * 之前的实现直接拿 AABB 当元素矩形用，导致「指针一动不动，
+ * 旋转 90° 的 200×100 元素也会变成 150×150、锚点漂 50px」。
+ */function computeResizeSingle(  start: InteractionSnapshot,
+  options: {
+    handle: ResizeHandle
+    pointer: Vec2
+    keepAspect: boolean
+    fromCenter: boolean
+    minSize: number
+  },
+): ResizeResult {
+  const { handle, pointer, keepAspect, fromCenter, minSize } = options
+  const rotation = start.boundsRotation
+
+  const { rect: local, centre: localCentre } = localRectOf(start)
+
+  // 指针 → 本地坐标系（绕 AABB 中心反旋）
+  const localPointer = rotation ? rotatePoint(pointer, localCentre, -rotation) : pointer
+
+  const affectsX = handle !== 'n' && handle !== 's'
+  const affectsY = handle !== 'e' && handle !== 'w'
+
+  /**
+   * ============================ 本地缩放 ============================
+   *
+   * 约定：本地矩形用 `left / top / width / height` 描述，**不变量**是
+   * 「每一边都从锚点那一侧量出去，所以半宽半高永远非负」。
+   * 这样锚点在整个手势里都是同一个点，也就真的钉住了。
+   */
+  const anchorLocal: Vec2 = fromCenter
+    ? localCentre
+    : {
+        x: handle.includes('w') ? local.x + local.width : local.x,
+        y: handle.includes('n') ? local.y + local.height : local.y,
+      }
+
+  const minHalf = minSize / 2
+
+  /**
+   * 逐轴算出「新矩形的哪两条边在哪里」。
+   *
+   * 语义与历史版本一致：被拖动的那条边跟随指针，另一条边钉在锚点上；
+   * 指针越过锚点时（尺寸被拖成负数）夹到最小尺寸，元素**不翻转**。
+   * 区别只在于这里算的是**本地坐标**，所以旋转元素也是对的。
+   *
+   * `t` 是「本地尺寸相对原尺寸的倍数」，用于最后按比例缩放 AABB。
+   */
+  const axis = (along: 'x' | 'y'): { t: number; half: number } => {
+    const affects = along === 'x' ? affectsX : affectsY
+    const isLow = along === 'x' ? handle.includes('w') : handle.includes('n')
+    const len0 = along === 'x' ? local.width : local.height
+    const anchor = along === 'x' ? anchorLocal.x : anchorLocal.y
+    const pointerPos = along === 'x' ? localPointer.x : localPointer.y
+
+    if (!affects) return { t: 1, half: len0 / 2 }
+    if (isLow) {
+      const lo = Math.min(pointerPos, anchor - minSize)
+      const len = anchor - lo
+      return { t: len / Math.max(1e-9, len0), half: len / 2 }
+    }
+    const len = Math.max(minSize, pointerPos - anchor)
+    return { t: len / Math.max(1e-9, len0), half: len / 2 }
+  }
+
+  let axisX = axis('x')
+  let axisY = axis('y')
+  let hx = axisX.half
+  let hy = axisY.half
+
+  const ratio = local.height === 0 ? 1 : local.width / local.height
+  /**
+   * 保持比例。
+   *
+   * 不能用「锚点到指针的距离」直接比比例：那个距离是**新尺寸**，
+   * 而 ratio 来自**原尺寸**，两者只有未缩放时才相等。正确做法是先算出
+   * 两个轴各自的拉伸倍数（×2 就是新尺寸/原尺寸），取变化更大的那个为准，
+   * 再让另一轴跟上同一个倍数。
+   */
+  const applyAspect = () => {
+    const sx = (hx * 2) / Math.max(1e-9, local.width)
+    const sy = (hy * 2) / Math.max(1e-9, local.height)
+    if (!affectsX) hx = hy * ratio
+    else if (!affectsY) hy = hx / ratio
+    else if (sx >= sy) hy = hx / ratio
+    else hx = hy * ratio
+  }
+
+  if (keepAspect) {
+    hx = Math.max(minHalf, hx)
+    hy = Math.max(minHalf, hy)
+    applyAspect()
+    hx = Math.max(minHalf, hx)
+    hy = Math.max(minHalf, hy)
+    axisX = { t: (hx * 2) / Math.max(1e-9, local.width), half: hx }
+    axisY = { t: (hy * 2) / Math.max(1e-9, local.height), half: hy }
+  }
+
+  const localWidth = axisX.half * 2
+  const localHeight = axisY.half * 2
+
+  // 指针没动 → 几何必须不变（也是「一碰手柄就跳」的回归基线）
+  if (Math.abs(localWidth - local.width) < 1e-9 && Math.abs(localHeight - local.height) < 1e-9) {
+    return {
+      positions: new Map([
+        [
+          start.elements[0].id,
+          {
+            x: round(local.x),
+            y: round(local.y),
+            width: round(local.width),
+            height: round(local.height),
+          },
+        ],
+      ]),
+    }
+  }
+
+  /**
+   * 映射回世界坐标。
+   *
+   * 分三步，缺一不可：
+   *   1. 锚点在**世界**里的位置是 `rotate(anchorLocal, 初始中心, θ)`
+   *      —— `anchorLocal` 是本地量，不能直接当世界基准；
+   *   2. 新中心 = 世界锚点 + rotate(本地中心偏移, θ)；
+   *   3. 新 AABB = 把新矩形绕**新中心**旋转后的外接矩形
+   *      （直接按当地宽高投影是错的：AABB 与元素尺寸不是投影关系，
+   *        那样会越缩越小、而且回不到原值）。
+   */
+  const anchorWorld = rotation ? rotatePoint(anchorLocal, localCentre, rotation) : anchorLocal
+  const localCenter: Vec2 = fromCenter
+    ? localCentre
+    : {
+        x: handle.includes('w') ? anchorLocal.x - hx : anchorLocal.x + hx,
+        y: handle.includes('n') ? anchorLocal.y - hy : anchorLocal.y + hy,
+      }
+  const offset = { x: localCenter.x - anchorLocal.x, y: localCenter.y - anchorLocal.y }
+  const rotatedOffset = rotation ? rotatePoint(offset, { x: 0, y: 0 }, rotation) : offset
+  const nextCenter = { x: anchorWorld.x + rotatedOffset.x, y: anchorWorld.y + rotatedOffset.y }
+
+  /**
+   * 返回值是**元素自己的矩形**（不是 AABB）：解析式给出的中心已经是元素
+   * 中心，宽高就是本地宽高。编辑器的渲染是 `left/top` + 绕中心
+   * `rotate(θ)`，所以这里必须回元素尺寸，AABB 只是它的派生量。
+   */
+  return {
+    positions: new Map([
+      [
+        start.elements[0].id,
+        {
+          x: round(nextCenter.x - localWidth / 2),
+          y: round(nextCenter.y - localHeight / 2),
+          width: round(localWidth),
+          height: round(localHeight),
+        },
+      ],
+    ]),
+  }
+}
+
 export function computeResize(
   start: InteractionSnapshot,
   options: {
@@ -210,18 +401,20 @@ export function computeResize(
     minSize: number
   },
 ): ResizeResult {
-  const { handle, pointer, keepAspect, fromCenter, minSize } = options
+  const { keepAspect, fromCenter, minSize } = options
   const rotation = start.boundsRotation
   const origin = start.bounds
 
-  // 把指针反向旋转回未旋转的坐标系
-  const local = rotation
-    ? rotatePoint(pointer, rectCenter(origin), -rotation)
-    : pointer
+  // 单元素：走上面的「本地坐标系 + 旋转补偿」路径
+  if (start.elements.length === 1) {
+    return computeResizeSingle(start, options)
+  }
 
-  const anchor = anchorFor(handle, origin, fromCenter)
-  const affectsX = handle !== 'n' && handle !== 's'
-  const affectsY = handle !== 'e' && handle !== 'w'
+  // 多元素：群组整体缩放（手柄画在群组包围盒上，见 ElementShell/EditorCanvas）
+  const local = rotation ? rotatePoint(options.pointer, rectCenter(origin), -rotation) : options.pointer
+  const anchor = anchorFor(options.handle, origin, fromCenter)
+  const affectsX = options.handle !== 'n' && options.handle !== 's'
+  const affectsY = options.handle !== 'e' && options.handle !== 'w'
 
   let left = origin.x
   let top = origin.y
@@ -229,7 +422,6 @@ export function computeResize(
   let bottom = origin.y + origin.height
 
   if (fromCenter) {
-    // 围绕中心对称缩放
     const centre = rectCenter(origin)
     if (affectsX) {
       const half = Math.abs(local.x - centre.x)
@@ -242,39 +434,45 @@ export function computeResize(
       bottom = centre.y + half
     }
   } else {
-    // 被拖动的边跟随指针，其余边由锚点钉住
     if (affectsX) {
-      if (handle.includes('w')) left = local.x
+      if (options.handle.includes('w')) left = local.x
       else right = local.x
+      if (options.handle.includes('w')) right = anchor.x
+      else left = anchor.x
     }
     if (affectsY) {
-      if (handle.includes('n')) top = local.y
+      if (options.handle.includes('n')) top = local.y
       else bottom = local.y
+      if (options.handle.includes('n')) bottom = anchor.y
+      else top = anchor.y
     }
-    if (affectsX) (handle.includes('w') ? (right = anchor.x) : (left = anchor.x))
-    if (affectsY) (handle.includes('n') ? (bottom = anchor.y) : (top = anchor.y))
   }
 
-  let width = Math.max(minSize, right - left)
-  let height = Math.max(minSize, bottom - top)
+  let width = Math.max(minSize, Math.abs(right - left))
+  let height = Math.max(minSize, Math.abs(bottom - top))
 
-  // 保持比例：按指针到锚点的距离反推另一条边，而不是直接套用原始比例，
-  // 否则拖拽时元素会突然跳变。
-  if (keepAspect && affectsX && affectsY && !fromCenter) {
-    const ratio = origin.width / Math.max(1, origin.height)
-    const rawWidth = Math.max(minSize, Math.abs(local.x - anchor.x))
-    const rawHeight = Math.max(minSize, Math.abs(local.y - anchor.y))
-    if (rawWidth / rawHeight > ratio) {
-      width = rawWidth
-      height = rawWidth / ratio
+  if (keepAspect) {
+    const ratio = origin.height === 0 ? 1 : origin.width / origin.height
+    if (affectsX && affectsY) {
+      if (width / Math.max(1, height) > ratio) height = width / ratio
+      else width = height * ratio
+    } else if (affectsX) {
+      height = width / ratio
     } else {
-      height = rawHeight
-      width = rawHeight * ratio
+      width = height * ratio
     }
-    if (handle.includes('w')) left = anchor.x - width
-    else left = anchor.x
-    if (handle.includes('n')) top = anchor.y - height
-    else top = anchor.y
+    if (fromCenter) {
+      const centre = rectCenter(origin)
+      left = centre.x - width / 2
+      right = centre.x + width / 2
+      top = centre.y - height / 2
+      bottom = centre.y + height / 2
+    } else {
+      if (options.handle.includes('w')) left = anchor.x - width
+      else left = anchor.x
+      if (options.handle.includes('n')) top = anchor.y - height
+      else top = anchor.y
+    }
   }
 
   const nextBounds: Rect = { x: left, y: top, width, height }
@@ -287,24 +485,16 @@ export function computeResize(
 
   const positions = new Map<string, { x: number; y: number; width: number; height: number }>()
 
-  if (start.elements.length === 1) {
-    const only = start.elements[0]
-    // 单元素：直接给出新几何，避免浮点累积误差
-    positions.set(only.id, {
-      x: round(left),
-      y: round(top),
-      width: round(width),
-      height: round(height),
-    })
-    return { positions }
-  }
-
   for (const entry of start.elements) {
-    // 元素中心相对包围盒中心的位置按比例缩放
-    const relative = {
+    // 元素中心相对包围盒中心的位置按比例缩放；群组本身也带旋转时，
+    // 这个相对向量同样要跟着转，否则群组旋转后缩放会错位
+    const relativeRaw = {
       x: rectCenter(entry.rect).x - originCenter.x,
       y: rectCenter(entry.rect).y - originCenter.y,
     }
+    const relative = rotation
+      ? rotatePoint(relativeRaw, { x: 0, y: 0 }, rotation)
+      : relativeRaw
     const nextCenterPoint = {
       x: nextCenter.x + relative.x * scaleX,
       y: nextCenter.y + relative.y * scaleY,

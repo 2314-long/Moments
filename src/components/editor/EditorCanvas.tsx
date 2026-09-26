@@ -74,7 +74,7 @@ type Interaction =
       startPointer: Vec2
       moved: boolean
     }
-  | { kind: 'marquee'; start: Vec2; current: Vec2; additive: boolean }
+  | { kind: 'marquee'; start: Vec2; current: Vec2; additive: boolean; pageId: string }
 
 export function EditorCanvas({
   album,
@@ -97,7 +97,7 @@ export function EditorCanvas({
   const [interaction, setInteraction] = useState<Interaction>({ kind: 'idle' })
   const [guides, setGuides] = useState<AlignmentGuide[]>([])
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [hoverPageId, setHoverPageId] = useState<string | null>(null)
+  const [, setHoverPageId] = useState<string | null>(null)
 
   const interactionRef = useRef<Interaction>({ kind: 'idle' })
   /** pageId → DOM 节点，供拖放命中测试使用 */
@@ -140,6 +140,17 @@ export function EditorCanvas({
   }, [selection, leftPage, rightPage])
 
   const selectionBox = useMemo(() => selectionBounds(selectedElements), [selectedElements])
+
+  /**
+   * 渲染辅助线 / 多选包围盒时需要叠加的跨页偏移。
+   *
+   * 这些几何值都是**页面本地坐标**，而它们的定位父节点是跨页 surface，
+   * 所以右页必须整体平移一个页面宽度，否则会画到左页同一 x 的位置上。
+   */
+  const rightPageOffset = pageSize.width + PAGE_GAP
+  const selectedPageId = selectedElements[0] ? pageOfElement(selectedElements[0].id) : null
+  const selectionPageOffset = selectedPageId && selectedPageId !== leftPage?.id ? rightPageOffset : 0
+  const guidePageOffset = selectionPageOffset
 
   /* ------------------------------------------------------ 指针 → 页面坐标 */
 
@@ -279,7 +290,8 @@ export function EditorCanvas({
       const additive = event.shiftKey || event.metaKey || event.ctrlKey
       if (!additive) clearSelection()
       setEditingId(null)
-      setInteraction({ kind: 'marquee', start: pointer, current: pointer, additive })
+      // 框选锁定在起始页：中途换坐标系会让矩形整体乱掉
+      setInteraction({ kind: 'marquee', start: pointer, current: pointer, additive, pageId: page.id })
       event.preventDefault()
     },
     [clearSelection, toLocal],
@@ -294,10 +306,10 @@ export function EditorCanvas({
       const current = interactionRef.current
       if (current.kind === 'idle') return
 
-      // 拖拽 / 缩放 / 旋转都发生在起始页面所在的坐标系里
+      // 拖拽 / 缩放 / 旋转 / 框选都发生在**起始页面**所在的坐标系里
       const anchorPageId =
         current.kind === 'marquee'
-          ? hoverPageId ?? activePageId
+          ? current.pageId
           : pageOfElement(current.snapshot.elements[0].id) ?? activePageId
       const pointer = toLocal({ x: event.clientX, y: event.clientY }, anchorPageId)
       if (!pointer) return
@@ -414,12 +426,13 @@ export function EditorCanvas({
       if (current.kind === 'marquee') {
         const rect = normalizeRect(current.start, current.current)
         if (rect.width > 2 || rect.height > 2) {
-          const hits = new Set<string>()
-          for (const page of [leftPage, rightPage]) {
-            if (!page) continue
-            for (const id of elementsInRect(page.elements, rect)) hits.add(id)
+          // 只命中起始页：左右页的本地坐标都是 0..pageWidth，若两页都套用
+          // 同一个矩形，在右页画一个小框会连带选中左页同位置的元素
+          const page = [leftPage, rightPage].find((p) => p?.id === current.pageId) ?? null
+          if (page) {
+            const hits = elementsInRect(page.elements, rect)
+            if (hits.length) select(hits, current.additive)
           }
-          if (hits.size) select([...hits], current.additive)
         }
       }
 
@@ -442,7 +455,6 @@ export function EditorCanvas({
     commitTransaction,
     duplicateElements,
     elementById,
-    hoverPageId,
     interaction.kind,
     leftPage,
     moveElementToPage,
@@ -515,6 +527,9 @@ export function EditorCanvas({
         return
       }
       if (!selection.length) return
+      // 长按方向键会产生大量 repeat 事件，每个都会写一条历史（上限 60 步），
+      // 这里只响应首次按下
+      if (event.repeat) return
       const step = event.shiftKey ? 10 : 1
       const map: Record<string, [number, number]> = {
         ArrowLeft: [-step, 0],
@@ -657,7 +672,7 @@ export function EditorCanvas({
           )}
         </div>
 
-        {/* 对齐辅助线 */}
+        {/* 对齐辅助线。位置是「页面本地坐标」，右页要加上跨页偏移 */}
         {guides.length > 0 && (
           <div className="pointer-events-none absolute inset-0 z-40">
             {guides.map((guide, index) =>
@@ -666,7 +681,7 @@ export function EditorCanvas({
                   key={`gx-${index}`}
                   className="absolute"
                   style={{
-                    left: guide.position,
+                    left: guide.position + guidePageOffset,
                     top: guide.from,
                     height: Math.max(1, guide.to - guide.from),
                     width: 1 / zoom,
@@ -679,7 +694,7 @@ export function EditorCanvas({
                   className="absolute"
                   style={{
                     top: guide.position,
-                    left: guide.from,
+                    left: guide.from + guidePageOffset,
                     width: Math.max(1, guide.to - guide.from),
                     height: 1 / zoom,
                     backgroundColor: 'rgba(226,88,140,0.95)',
@@ -690,12 +705,12 @@ export function EditorCanvas({
           </div>
         )}
 
-        {/* 多选包围盒 */}
+        {/* 多选包围盒：同样要落在元素所在的那一页上 */}
         {selectedElements.length > 1 && selectionBox && (
           <div
             className="pointer-events-none absolute z-30"
             style={{
-              left: selectionBox.x,
+              left: selectionBox.x + selectionPageOffset,
               top: selectionBox.y,
               width: selectionBox.width,
               height: selectionBox.height,
@@ -712,7 +727,7 @@ export function EditorCanvas({
             style={{
               left:
                 normalizeRect(interaction.start, interaction.current).x +
-                ((hoverPageId ?? activePageId) === leftPage?.id ? 0 : pageSize.width + PAGE_GAP),
+                (interaction.pageId === leftPage?.id ? 0 : pageSize.width + PAGE_GAP),
               top: normalizeRect(interaction.start, interaction.current).y,
               width: normalizeRect(interaction.start, interaction.current).width,
               height: normalizeRect(interaction.start, interaction.current).height,
@@ -843,6 +858,15 @@ function registerPageNode(
  *
  * 返回目标页 id 与所在侧；调用方在指针抬起时据此把元素
  * 真正移动到另一页（并把 x 换算到新的页面坐标系）。
+ *
+ * 关键点：**必须先确定元素当前在哪一页**，再决定邻居是谁。
+ * 之前用 `album.pages.findIndex(p => p.id === leftPage?.id || p.id === rightPage?.id)`
+ * 取的是「跨页左页」的下标，却用它算 `index - 1`，于是右页元素往左拖会被
+ * 搬到上上页（当前跨页完全没显示的那一页），x 再 +720 就直接飞出可视范围；
+ * 同时判据用的是元素在**本页**的本地 x，左页元素中心天然小于半页宽，
+ * 于是「随便动 1px」就会弹出跨页提示。这里两处都改掉：
+ *   - 用元素所在页的下标找邻居；
+ *   - 判据换成「元素中心已经越过相邻页的中线」（本地 x < 0 或 > pageWidth）。
  */
 function resolveCrossPageTarget(
   album: Album,
@@ -855,19 +879,25 @@ function resolveCrossPageTarget(
   const element = selected[0]
   const center = element.x + element.width / 2
 
-  const index = album.pages.findIndex((p) => p.id === leftPage?.id || p.id === rightPage?.id)
-  if (index < 0) return null
+  // 元素当前落在哪一页
+  const onLeft = Boolean(leftPage && leftPage.elements.some((e) => e.id === element.id))
+  const onRight = Boolean(rightPage && rightPage.elements.some((e) => e.id === element.id))
+  if (!onLeft && !onRight) return null
 
-  if (rightPage && center < pageWidth * 0.5) {
-    // 想移到左页
-    const target = album.pages[index - 1]
+  const currentPageId = onLeft ? leftPage!.id : rightPage!.id
+  const currentIndex = album.pages.findIndex((p) => p.id === currentPageId)
+  if (currentIndex < 0) return null
+
+  // 中心越过本页左边界 → 想去上一页
+  if (onRight && center < 0) {
+    const target = album.pages[currentIndex - 1]
     if (!target) return null
     return { targetPageId: target.id, side: 'left', offsetX: pageWidth + PAGE_GAP }
   }
 
-  if (leftPage && center > pageWidth * 1.5) {
-    // 想移到右页
-    const target = album.pages[index + 1]
+  // 中心越过本页右边界 → 想去下一页
+  if (onLeft && center > pageWidth) {
+    const target = album.pages[currentIndex + 1]
     if (!target) return null
     return { targetPageId: target.id, side: 'right', offsetX: -(pageWidth + PAGE_GAP) }
   }

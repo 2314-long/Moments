@@ -55,10 +55,3 @@ export function isAcceptedImage(file: File): boolean {
   // 有些系统对 HEIC 不给 mime type，只能看扩展名
   return /\.(jpe?g|png|webp|heic|heif|avif|gif)$/i.test(file.name)
 }
-
-/** 生成一个「正在上传」用的占位渐变地址（无照片数据时） */
-export function placeholderDataUrl(seed: string): string {
-  let hash = 0
-  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) % 360
-  return `linear-gradient(135deg, hsl(${hash} 24% 62%), hsl(${(hash + 48) % 360} 28% 46%))`
-}

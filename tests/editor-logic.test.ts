@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { boundsOf, hitTestRect, rectCorners, rotatePoint, snapAngle } from '../src/lib/geometry.ts'
+import { boundsOf, hitTestRect, rectCenter, rectCorners, rotatePoint, snapAngle } from '../src/lib/geometry.ts'
 import {
   computeDrag,
   computeResize,
@@ -199,27 +199,210 @@ test('从中心缩放时中心不动', () => {
   assert.ok(Math.abs(geometry.y + geometry.height / 2 - 150) < 1e-6)
 })
 
-test('computeResize 对旋转元素的指针做了反向旋转（锚点仍然不动）', () => {
-  const start: InteractionSnapshot = {
+/* ------------------------------------------------------------------ *
+ * 旋转元素的缩放
+ *
+ * 这里必须用**和 EditorCanvas 一样**的快照：bounds 是元素旋转后的
+ * 轴对齐包围盒（AABB），不是元素矩形。旧测试把 bounds 直接写成元素矩形，
+ * 于是「一碰手柄就跳 50px」这个真实缺陷结构上不可能被断言到。
+ * ------------------------------------------------------------------ */
+
+/** 与 EditorCanvas.buildSnapshot 一致：bounds = 旋转后的 AABB */
+function rotatedScenario(element: ReturnType<typeof rect>, rotation: number): InteractionSnapshot {
+  const centre = rectCenter(element)
+  const rad = (rotation * Math.PI) / 180
+  const width = Math.abs(element.width * Math.cos(rad)) + Math.abs(element.height * Math.sin(rad))
+  const height = Math.abs(element.width * Math.sin(rad)) + Math.abs(element.height * Math.cos(rad))
+  return {
     pointer: { x: 0, y: 0 },
-    elements: [{ id: 'a', rect: rect(100, 100, 200, 100), rotation: 90 }],
-    bounds: rect(100, 100, 200, 100),
-    boundsRotation: 90,
+    elements: [{ id: 'a', rect: element, rotation }],
+    bounds: rect(centre.x - width / 2, centre.y - height / 2, width, height),
+    boundsRotation: rotation,
     startAngle: 0,
   }
-  // 旋转 90 度后，元素中心 (200,150)；把指针放在「屏幕上」的右下方向
-  const result = computeResize(start, {
+}
+
+/** 元素上的「材质点」（本地偏移）在屏幕上的位置 */
+function materialPoint(
+  geometry: ReturnType<typeof rect>,
+  rotation: number,
+  offset: { x: number; y: number },
+): { x: number; y: number } {
+  return rotatePoint(
+    { x: geometry.x + offset.x, y: geometry.y + offset.y },
+    rectCenter(geometry),
+    rotation,
+  )
+}
+
+/** 手柄与它对应的锚点（本地偏移） */
+function handleOffsets(handle: string, w: number, h: number) {
+  const byHandle: Record<string, { handle: { x: number; y: number }; anchor: { x: number; y: number } }> = {
+    nw: { handle: { x: 0, y: 0 }, anchor: { x: w, y: h } },
+    ne: { handle: { x: w, y: 0 }, anchor: { x: 0, y: h } },
+    se: { handle: { x: w, y: h }, anchor: { x: 0, y: 0 } },
+    sw: { handle: { x: 0, y: h }, anchor: { x: w, y: 0 } },
+    e: { handle: { x: w, y: h / 2 }, anchor: { x: 0, y: h / 2 } },
+    w: { handle: { x: 0, y: h / 2 }, anchor: { x: w, y: h / 2 } },
+    n: { handle: { x: w / 2, y: 0 }, anchor: { x: w / 2, y: h } },
+    s: { handle: { x: w / 2, y: h }, anchor: { x: w / 2, y: 0 } },
+  }
+  return byHandle[handle]
+}
+
+test('旋转元素：指针停住不动时，缩放不得改变任何几何（回归）', () => {
+  const element = rect(100, 100, 200, 100)
+  const handles = ['nw', 'ne', 'se', 'sw', 'e', 'w', 'n', 's'] as const
+  for (const rotation of [0, 17, 30, 45, 90, 137, 180, 270]) {
+    for (const handle of handles) {
+      const offsets = handleOffsets(handle, element.width, element.height)
+      // 指针正好落在手柄在屏幕上的位置
+      const pointer = materialPoint(element, rotation, offsets.handle)
+      const next = resize(rotatedScenario(element, rotation), handle, pointer)
+      assert.deepEqual(
+        [next.x, next.y, next.width, next.height],
+        [element.x, element.y, element.width, element.height],
+        `rotation=${rotation} handle=${handle}：指针没动，几何不应变化`,
+      )
+    }
+  }
+})
+
+test('旋转元素：被拖动的点精确跟随指针，锚点全程不动', () => {
+  const element = rect(100, 100, 200, 100)
+  /** 让指针沿「元素本地坐标系」的某个方向移动 screen 像素 */
+  const moveLocal = (
+    rotation: number,
+    from: { x: number; y: number },
+    localDir: { x: number; y: number },
+    distance: number,
+  ) => {
+    const dir = rotatePoint(localDir, { x: 0, y: 0 }, rotation)
+    const len = Math.hypot(dir.x, dir.y)
+    return { x: from.x + (dir.x / len) * distance, y: from.y + (dir.y / len) * distance }
+  }
+
+  const handles = ['nw', 'ne', 'se', 'sw', 'e', 'w', 'n', 's']
+  const outwardLocal: Record<string, { x: number; y: number }> = {
+    se: { x: 1, y: 1 }, nw: { x: -1, y: -1 }, ne: { x: 1, y: -1 }, sw: { x: -1, y: 1 },
+    e: { x: 1, y: 0 }, w: { x: -1, y: 0 }, n: { x: 0, y: -1 }, s: { x: 0, y: 1 },
+  }
+
+  for (const rotation of [0, 17, 30, 45, 90, 137, 180, 270]) {
+    for (const handle of handles) {
+      const offs = handleOffsets(handle, element.width, element.height)
+      const grab = materialPoint(element, rotation, offs.handle)
+      // 只沿「会动的那条边」的法线方向推，避免把比例也一起改掉
+      const along: { x: number; y: number } =
+        handle === 'e' ? { x: 1, y: 0 }
+        : handle === 'w' ? { x: -1, y: 0 }
+        : handle === 'n' ? { x: 0, y: -1 }
+        : outwardLocal[handle]
+      const pointer = moveLocal(rotation, grab, along, 40)
+
+      const next = resize(rotatedScenario(element, rotation), handle as never, pointer)
+      assert.ok(next, '必须返回新几何')
+
+      // B：拖动点跟随指针
+      const followed = materialPoint(
+        next,
+        rotation,
+        handleOffsets(handle, next.width, next.height).handle,
+      )
+      const followErr = Math.hypot(followed.x - pointer.x, followed.y - pointer.y)
+      assert.ok(
+        followErr < 0.12,
+        `rotation=${rotation} handle=${handle}: 跟随误差 ${followErr.toFixed(3)}px`,
+      )
+
+      // C：锚点不动。注意锚点要作为**材质点**跟踪：它的本地偏移在元素尺寸
+      // 变化后必须按新尺寸重新表达（例如锚点是右下角，就是 (w', h')）。
+      const anchorAsMaterial = (g: ReturnType<typeof rect>) => {
+        if (handle === 'nw') return materialPoint(g, rotation, { x: g.width, y: g.height })
+        if (handle === 'ne') return materialPoint(g, rotation, { x: 0, y: g.height })
+        if (handle === 'se') return materialPoint(g, rotation, { x: 0, y: 0 })
+        if (handle === 'sw') return materialPoint(g, rotation, { x: g.width, y: 0 })
+        if (handle === 'e' || handle === 'w') {
+          return materialPoint(g, rotation, { x: handle === 'e' ? 0 : g.width, y: g.height / 2 })
+        }
+        return materialPoint(g, rotation, { x: g.width / 2, y: handle === 'n' ? g.height : 0 })
+      }
+      const before = anchorAsMaterial(element)
+      const after = anchorAsMaterial(next)
+      const drift = Math.hypot(after.x - before.x, after.y - before.y)
+      assert.ok(drift < 0.12, `rotation=${rotation} handle=${handle}: 锚点漂移 ${drift.toFixed(3)}px`)
+    }
+  }
+})
+
+test('旋转元素：拖左右边手柄只改宽度，拖上下边只改高度', () => {
+  const element = rect(100, 100, 200, 100)
+  const moveLocal = (
+    rotation: number,
+    from: { x: number; y: number },
+    localDir: { x: number; y: number },
+    distance: number,
+  ) => {
+    const dir = rotatePoint(localDir, { x: 0, y: 0 }, rotation)
+    const len = Math.hypot(dir.x, dir.y)
+    return { x: from.x + (dir.x / len) * distance, y: from.y + (dir.y / len) * distance }
+  }
+
+  for (const rotation of [0, 30, 90]) {
+    const east = materialPoint(element, rotation, { x: element.width, y: element.height / 2 })
+    const eastNext = resize(
+      rotatedScenario(element, rotation),
+      'e',
+      moveLocal(rotation, east, { x: 1, y: 0 }, 30),
+    )
+    assert.equal(eastNext.width, 230, `rotation=${rotation}: 拖右边应只改宽度`)
+    assert.equal(eastNext.height, 100, `rotation=${rotation}: 高度必须保持不变`)
+
+    const north = materialPoint(element, rotation, { x: element.width / 2, y: 0 })
+    const northNext = resize(
+      rotatedScenario(element, rotation),
+      'n',
+      moveLocal(rotation, north, { x: 0, y: -1 }, 30),
+    )
+    assert.equal(northNext.width, 200, `rotation=${rotation}: 宽度必须保持不变`)
+    assert.equal(northNext.height, 130, `rotation=${rotation}: 拖上边应只改高度`)
+  }
+})
+
+test('Alt+Shift（从中心缩放 + 保持比例）也要保持比例', () => {
+  const element = rect(100, 100, 200, 100) // 2:1
+  const next = resize(
+    resizeScenario(element),
+    'se',
+    { x: 400, y: 300 },
+    { keepAspect: true, fromCenter: true },
+  )
+  assert.ok(Math.abs(next.width / next.height - 2) < 1e-9, `${next.width}x${next.height}`)
+  assert.ok(Math.abs(next.x + next.width / 2 - 200) < 1e-6, '中心不应移动')
+  assert.ok(Math.abs(next.y + next.height / 2 - 150) < 1e-6, '中心不应移动')
+})
+
+test('多选缩放的输入应当来自群组包围盒（与 Canvas 一致）', () => {
+  const a = rect(100, 100, 100, 100)
+  const b = rect(400, 100, 100, 100)
+  const start = snapshotFor([
+    { id: 'a', rect: a },
+    { id: 'b', rect: b },
+  ])
+  assert.deepEqual(start.bounds, rect(100, 100, 400, 100), '群组 bounds 应覆盖两个元素')
+  // 群组整体放大 1 倍：以包围盒左上为锚点，指针拖到 (900, 400)
+  const next = computeResize(start, {
     handle: 'se',
-    pointer: { x: 300, y: 250 },
+    pointer: { x: 900, y: 400 },
     keepAspect: false,
     fromCenter: false,
-    minSize: 10,
+    minSize: 28,
   })
-  const next = result.positions.get('a')
-  assert.ok(next, '必须返回新几何')
-  // 关键性质：锚点（左上角在元素本地坐标系中）在页面坐标系里保持不动
-  assert.ok(Number.isFinite(next.x) && Number.isFinite(next.y))
-  assert.ok(next.width >= 10 && next.height >= 10)
+  const na = next.positions.get('a')!
+  const nb = next.positions.get('b')!
+  assert.ok(na.width > 100 && nb.width > 100, '两个元素都应被放大')
+  assert.ok(na.x < nb.x, '相对顺序应保持')
+  assert.equal(na.x, 100, '群组锚点（左上）不应移动')
 })
 
 /* ------------------------------------------------------------------ *

@@ -1,0 +1,158 @@
+[
+  {
+    "name": "lake-01",
+    "scene": "lakeTurquoise",
+    "width": 1280,
+    "height": 854
+  },
+  {
+    "name": "lake-02",
+    "scene": "lakeFiveFlower",
+    "width": 1200,
+    "height": 900
+  },
+  {
+    "name": "lake-03",
+    "scene": "lakeDeep",
+    "width": 1280,
+    "height": 854
+  },
+  {
+    "name": "lake-04",
+    "scene": "aerial",
+    "width": 1280,
+    "height": 854
+  },
+  {
+    "name": "lake-05",
+    "scene": "lakeTurquoise",
+    "width": 1000,
+    "height": 1000
+  },
+  {
+    "name": "forest-01",
+    "scene": "forest",
+    "width": 900,
+    "height": 1200
+  },
+  {
+    "name": "forest-02",
+    "scene": "forest",
+    "width": 1280,
+    "height": 854
+  },
+  {
+    "name": "forest-03",
+    "scene": "forest",
+    "width": 1200,
+    "height": 900
+  },
+  {
+    "name": "falls-01",
+    "scene": "waterfall",
+    "width": 1200,
+    "height": 900
+  },
+  {
+    "name": "falls-02",
+    "scene": "waterfall",
+    "width": 1280,
+    "height": 854
+  },
+  {
+    "name": "peak-01",
+    "scene": "snowPeak",
+    "width": 1280,
+    "height": 854
+  },
+  {
+    "name": "peak-02",
+    "scene": "snowPeak",
+    "width": 1200,
+    "height": 900
+  },
+  {
+    "name": "peak-03",
+    "scene": "aerial",
+    "width": 900,
+    "height": 1200
+  },
+  {
+    "name": "road-01",
+    "scene": "road",
+    "width": 1280,
+    "height": 854
+  },
+  {
+    "name": "road-02",
+    "scene": "road",
+    "width": 1200,
+    "height": 900
+  },
+  {
+    "name": "people-01",
+    "scene": "portrait",
+    "width": 1000,
+    "height": 1000
+  },
+  {
+    "name": "people-02",
+    "scene": "portrait",
+    "width": 1200,
+    "height": 900
+  },
+  {
+    "name": "people-03",
+    "scene": "portraitWarm",
+    "width": 1200,
+    "height": 900
+  },
+  {
+    "name": "people-04",
+    "scene": "portraitWarm",
+    "width": 1000,
+    "height": 1000
+  },
+  {
+    "name": "people-05",
+    "scene": "portrait",
+    "width": 900,
+    "height": 1200
+  },
+  {
+    "name": "food-01",
+    "scene": "food",
+    "width": 1000,
+    "height": 1000
+  },
+  {
+    "name": "food-02",
+    "scene": "food",
+    "width": 1200,
+    "height": 900
+  },
+  {
+    "name": "night-01",
+    "scene": "night",
+    "width": 1280,
+    "height": 854
+  },
+  {
+    "name": "night-02",
+    "scene": "night",
+    "width": 1200,
+    "height": 900
+  },
+  {
+    "name": "lake-06",
+    "scene": "lakeFiveFlower",
+    "width": 1280,
+    "height": 854
+  },
+  {
+    "name": "forest-04",
+    "scene": "forest",
+    "width": 1000,
+    "height": 1000
+  }
+]

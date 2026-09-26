@@ -92,8 +92,21 @@ const READ_EXPR = `(() => {
      * 落平帧不含纸叶，所以只比对落平帧与静止态永远发现不了旋转轴取错。
      */
     leafBackBox: box(document.querySelector('[data-face="back"]')),
-    /** 书口不应当再有任何凸出的装饰，所以这个数必须是 0 */
-    deckCount: document.querySelectorAll('[data-stack]').length,
+    /**
+     * 书口不应当再有任何凸出的装饰。
+     *
+     * 这里统计的是「超出所在页面盒子」的纸块类元素，而不是某个约定好的
+     * data-stack 属性 —— 之前那个选择器全项目没有任何生产者，断言恒为 0，
+     * 是一条永远为真的假验收。
+     */
+    deckCount: Array.from(document.querySelectorAll('[data-leaf-layer] *, [data-spine] ~ *'))
+      .filter((el) => {
+        const r = el.getBoundingClientRect()
+        const page = el.closest('[data-face="front"]')
+        if (!page) return false
+        const p = page.getBoundingClientRect()
+        return r.width > 0 && (r.left < p.left - 0.5 || r.right > p.right + 0.5)
+      }).length,
     /**
      * 纸叶内部「书脊侧切面」淡色竖条的数量，必须是 0。
      *
@@ -456,7 +469,7 @@ check(
   `书脊层必须画在纸叶之上（书脊 z=${nextNear?.spineZ}，纸叶 z=${nextNear?.leafLayerZ}）—— ` +
     `否则翻页时纸叶会盖掉书脊阴影，落平那一帧阴影又会跳回来`,
 )
-console.log(`  [data-stack] 元素个数 = ${landedNext.deckCount}（应当为 0）`)
+console.log(`  凸出页面盒子的纸块类元素 = ${landedNext.deckCount} 个（应当为 0）`)
 console.log(
   `  纸叶内的「书脊侧切面」淡色竖条 = ${nextNear?.leafSpineTone} 条（应当为 0）`,
 )
@@ -467,7 +480,7 @@ check(
 )
 check(
   landedNext.deckCount === 0,
-  `书口不应再有凸出的纸块，实际有 ${landedNext.deckCount} 个 [data-stack] 元素`,
+  `书口不应再有凸出的纸块，实际有 ${landedNext.deckCount} 个凸出元素`,
 )
 {
   const l = landedNext.leftPageBox

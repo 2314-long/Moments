@@ -45,7 +45,11 @@ export function PreviewPage() {
   const slug = album.share?.slug ?? album.id
 
   return (
-    <div className="relative h-full w-full overflow-hidden">
+    <div
+      className="relative h-full w-full overflow-hidden"
+      // 告诉 Reader 左侧要给浮动按钮让出多少位置（避免压住书名）
+      style={{ ['--reader-top-inset' as string]: '4.5rem' }}
+    >
       <Reader
         key={initialIndex}
         album={album}

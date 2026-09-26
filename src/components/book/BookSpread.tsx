@@ -325,7 +325,9 @@ function BookSpreadImpl({
       data-right={cardRight?.title ?? ''}
       data-leaf-front={!landed && flip?.leafFront ? flip.leafFront.title : ''}
       data-leaf-back={!landed && flip?.leafBack ? flip.leafBack.title : ''}
-      data-progress={t.toFixed(3)}
+      /* 进度保留 5 位：3 位时 p=0.99997 会打印成 "1.000"，
+         与同时为 0 的 data-landed 自相矛盾（落平帧其实还没到） */
+      data-progress={t.toFixed(5)}
       data-landed={landed ? '1' : '0'}
       style={{
         position: 'relative',

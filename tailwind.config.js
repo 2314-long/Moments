@@ -99,17 +99,12 @@ export default {
           '0%': { opacity: '0', transform: 'translateY(12px) scale(0.98)' },
           '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
         },
-        shimmer: {
-          '0%': { backgroundPosition: '-200% 0' },
-          '100%': { backgroundPosition: '200% 0' },
-        },
       },
       animation: {
         'fade-up': 'fade-up 0.32s cubic-bezier(0.22, 1, 0.36, 1) both',
         'fade-in': 'fade-in 0.24s ease both',
         'pop-in': 'pop-in 0.18s cubic-bezier(0.22, 1, 0.36, 1) both',
         'toast-in': 'toast-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) both',
-        shimmer: 'shimmer 2.2s linear infinite',
       },
     },
   },

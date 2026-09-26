@@ -1,5 +1,5 @@
 import type { AlbumTheme, GeoPoint, Page } from '@/types/album'
-import { FONT_STACK, PAGE_HEIGHT, PAGE_WIDTH, THEMES } from '@/lib/designTokens'
+import { FONT_STACK, THEMES } from '@/lib/designTokens'
 import { STICKER_LIBRARY } from '@/lib/stickerLibrary'
 import { newElementId, newPageId } from '@/lib/id'
 import type { AiLayoutProvider, AiLayoutResult, PhotoInsight } from './provider'
@@ -417,5 +417,3 @@ function paperColorFor(themeId: AlbumTheme): string {
       return '#f7f3ea'
   }
 }
-
-export const DEFAULT_PAGE_SIZE = { width: PAGE_WIDTH, height: PAGE_HEIGHT }

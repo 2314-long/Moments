@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlignCenter,
   AlignLeft,
@@ -32,7 +32,12 @@ import { FONT_STACK, PHOTO_STYLE_LIST, TEXT_PRESET_LIST } from '@/lib/designToke
  * 右侧属性面板。
  *
  * 只显示与当前选中元素相关的属性，避免把一堆用不到的控件堆在用户面前。
- * 所有数值输入都是「改完即生效」，并且会合并进同一条撤销记录。
+ *
+ * 撤销粒度：属性面板里既有「点一下」的离散操作，也有「拖滑块 / 连续输入」
+ * 的高频操作。为了既不让每一次 pointermove 都塞一条历史（会把 60 步
+ * 上限一口气用光），又能让用户用 Ctrl+Z 撤回整段调整，这里用
+ * beginTransaction / commitTransaction 把一次连续操作合并成**一条**记录：
+ * 第一次改动时开启事务，之后 450ms 没有新改动、或指针抬起，就提交。
  */
 
 const COLOR_SWATCHES = [
@@ -42,11 +47,58 @@ const COLOR_SWATCHES = [
   '#8c5a5a', '#f2ead8', '#ffffff', '#243040',
 ]
 
+/** 把「一次连续调整」合并成一条历史记录 */
+const QUIET_MS = 450
+
+type Patcher = (updater: (element: AlbumElement) => AlbumElement, label: string) => void
+
+const PatchContext = createContext<Patcher | null>(null)
+
+/** 取到「事务化」的 updateSelected；不在 Provider 内时退回普通实现 */
+function usePatch(): Patcher {
+  const fromContext = useContext(PatchContext)
+  const fallback = useEditorStore((state) => state.updateSelected)
+  return fromContext ?? fallback
+}
+
+function useTransactedUpdate(): Patcher {
+  const updateSelected = useEditorStore((state) => state.updateSelected)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const flush = useCallback(() => {
+    if (timer.current) {
+      clearTimeout(timer.current)
+      timer.current = null
+    }
+    useEditorStore.getState().commitTransaction('调整属性')
+  }, [])
+
+  // 指针抬起 = 一次拖拽 / 取色结束，立刻落一条历史，不必等静默计时
+  useEffect(() => {
+    window.addEventListener('pointerup', flush)
+    window.addEventListener('pointercancel', flush)
+    return () => {
+      window.removeEventListener('pointerup', flush)
+      window.removeEventListener('pointercancel', flush)
+      flush()
+    }
+  }, [flush])
+
+  return useCallback(
+    (updater, label) => {
+      useEditorStore.getState().beginTransaction()
+      updateSelected(updater, label)
+      if (timer.current) clearTimeout(timer.current)
+      timer.current = setTimeout(flush, QUIET_MS)
+    },
+    [flush, updateSelected],
+  )
+}
+
 export function Inspector() {
   const selection = useEditorStore((state) => state.selection)
   const album = useEditorStore((state) => state.album)
-  const activePageId = useEditorStore((state) => state.activePageId)
-  const updateSelected = useEditorStore((state) => state.updateSelected)
+  const updateSelected = useTransactedUpdate()
   const removeElements = useEditorStore((state) => state.removeElements)
   const duplicateElements = useEditorStore((state) => state.duplicateElements)
   const toggleLock = useEditorStore((state) => state.toggleLock)
@@ -55,11 +107,24 @@ export function Inspector() {
   const bringToFront = useEditorStore((state) => state.bringToFront)
   const sendToBack = useEditorStore((state) => state.sendToBack)
 
+  /**
+   * 选中的元素要**跨页**查找。
+   *
+   * 之前只按 activePageId 过滤，而 activePageId 永远是跨页的左槽，
+   * 于是点选右页元素后属性面板会显示「未选中任何元素」。
+   * 元素 id 全局唯一，所以直接扫全部页面即可。
+   */
   const selected = useMemo(() => {
-    const page = album?.pages.find((p) => p.id === activePageId)
-    if (!page) return []
-    return page.elements.filter((e) => selection.includes(e.id))
-  }, [album, activePageId, selection])
+    if (!album || !selection.length) return []
+    const wanted = new Set(selection)
+    const found: AlbumElement[] = []
+    for (const page of album.pages) {
+      for (const element of page.elements) {
+        if (wanted.has(element.id)) found.push(element)
+      }
+    }
+    return found
+  }, [album, selection])
 
   if (!selected.length) {
     return <EmptyInspector />
@@ -67,115 +132,128 @@ export function Inspector() {
 
   const primary = selected[0]
   const multi = selected.length > 1
+  // 锁定的元素只允许解锁，其余属性不允许改（与「锁定」这个语义保持一致）
+  const locked = selected.every((element) => element.locked)
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto">
-      {/* 头部 */}
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/[0.06] px-3 py-2.5">
-        <div className="min-w-0">
-          <div className="truncate text-[11px] text-ink-200">
-            {multi ? `已选中 ${selected.length} 个元素` : kindLabel(primary.kind)}
+    <PatchContext.Provider value={updateSelected}>
+      <div className="flex h-full flex-col overflow-y-auto">
+        {/* 头部 */}
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/[0.06] px-3 py-2.5">
+          <div className="min-w-0">
+            <div className="truncate text-[11px] text-ink-200">
+              {multi ? `已选中 ${selected.length} 个元素` : kindLabel(primary.kind)}
+            </div>
+            <div className="text-[9px] text-ink-600">
+              {multi
+                ? '拖动可整体移动'
+                : `${Math.round(primary.width)} × ${Math.round(primary.height)}`}
+            </div>
           </div>
-          <div className="text-[9px] text-ink-600">
-            {multi ? '拖动可整体移动' : `${Math.round(primary.width)} × ${Math.round(primary.height)}`}
+          <div className="flex shrink-0 gap-0.5">
+            <IconBtn title="复制 (Ctrl+D)" onClick={() => duplicateElements()} disabled={locked}>
+              <Copy className="h-3.5 w-3.5" />
+            </IconBtn>
+            <IconBtn title={primary.locked ? '解锁' : '锁定'} onClick={() => toggleLock()}>
+              {primary.locked ? <Lock className="h-3.5 w-3.5" /> : <LockOpen className="h-3.5 w-3.5" />}
+            </IconBtn>
+            <IconBtn
+              title={locked ? '已锁定，先解锁再删除' : '删除 (Delete)'}
+              danger
+              disabled={locked}
+              onClick={() => removeElements()}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </IconBtn>
           </div>
         </div>
-        <div className="flex shrink-0 gap-0.5">
-          <IconBtn title="复制 (Ctrl+D)" onClick={() => duplicateElements()}>
-            <Copy className="h-3.5 w-3.5" />
-          </IconBtn>
-          <IconBtn
-            title={primary.locked ? '解锁' : '锁定'}
-            onClick={() => toggleLock()}
-          >
-            {primary.locked ? <Lock className="h-3.5 w-3.5" /> : <LockOpen className="h-3.5 w-3.5" />}
-          </IconBtn>
-          <IconBtn title="删除 (Delete)" danger onClick={() => removeElements()}>
-            <Trash2 className="h-3.5 w-3.5" />
-          </IconBtn>
+        {locked && (
+          <div className="shrink-0 border-b border-white/[0.06] bg-ink-800/40 px-3 py-1.5 text-[10px] text-ink-500">
+            元素已锁定，属性不可修改
+          </div>
+        )}
+
+        <div className="space-y-3.5 px-3 py-3">
+          {/* 位置与大小 */}
+          <Section title="位置与大小">
+            <div className="grid grid-cols-2 gap-2">
+              <NumberField
+                label="X"
+                value={primary.x}
+                onChange={(value) => updateSelected((e) => ({ ...e, x: value }), '修改位置')}
+              />
+              <NumberField
+                label="Y"
+                value={primary.y}
+                onChange={(value) => updateSelected((e) => ({ ...e, y: value }), '修改位置')}
+              />
+              <NumberField
+                label="宽"
+                value={primary.width}
+                min={8}
+                onChange={(value) => updateSelected((e) => ({ ...e, width: value }), '修改尺寸')}
+              />
+              <NumberField
+                label="高"
+                value={primary.height}
+                min={8}
+                onChange={(value) => updateSelected((e) => ({ ...e, height: value }), '修改尺寸')}
+              />
+            </div>
+
+            <SliderField
+              label="旋转"
+              value={primary.rotation}
+              min={-180}
+              max={180}
+              step={1}
+              suffix="°"
+              onChange={(value) => updateSelected((e) => ({ ...e, rotation: value }), '修改旋转')}
+              onReset={() => updateSelected((e) => ({ ...e, rotation: 0 }), '重置旋转')}
+            />
+            <SliderField
+              label="不透明度"
+              value={Math.round(primary.opacity * 100)}
+              min={0}
+              max={100}
+              step={1}
+              suffix="%"
+              onChange={(value) => updateSelected((e) => ({ ...e, opacity: value / 100 }), '修改透明度')}
+            />
+            <SliderField
+              label="阴影"
+              value={Math.round((primary.shadow ?? 0) * 100)}
+              min={0}
+              max={100}
+              step={1}
+              suffix="%"
+              onChange={(value) => updateSelected((e) => ({ ...e, shadow: value / 100 }), '修改阴影')}
+            />
+          </Section>
+
+          {/* 层级 */}
+          <Section title="层级">
+            <div className="grid grid-cols-4 gap-1.5">
+              <LayerBtn title="置于顶层" onClick={() => bringToFront()} disabled={locked}>
+                <ArrowUpToLine className="h-3.5 w-3.5" />
+              </LayerBtn>
+              <LayerBtn title="上移一层" onClick={() => bringForward()} disabled={locked}>
+                <ChevronUp className="h-3.5 w-3.5" />
+              </LayerBtn>
+              <LayerBtn title="下移一层" onClick={() => sendBackward()} disabled={locked}>
+                <ChevronDown className="h-3.5 w-3.5" />
+              </LayerBtn>
+              <LayerBtn title="置于底层" onClick={() => sendToBack()} disabled={locked}>
+                <ArrowDownToLine className="h-3.5 w-3.5" />
+              </LayerBtn>
+            </div>
+          </Section>
+
+          {/* 类型专属属性 */}
+          {!multi && <TypeSpecific element={primary} />}
         </div>
       </div>
-
-      <div className="space-y-3.5 px-3 py-3">
-        {/* 位置与大小 */}
-        <Section title="位置与大小">
-          <div className="grid grid-cols-2 gap-2">
-            <NumberField
-              label="X"
-              value={primary.x}
-              onChange={(value) => updateSelected((e) => ({ ...e, x: value }), '修改位置')}
-            />
-            <NumberField
-              label="Y"
-              value={primary.y}
-              onChange={(value) => updateSelected((e) => ({ ...e, y: value }), '修改位置')}
-            />
-            <NumberField
-              label="宽"
-              value={primary.width}
-              min={8}
-              onChange={(value) => updateSelected((e) => ({ ...e, width: value }), '修改尺寸')}
-            />
-            <NumberField
-              label="高"
-              value={primary.height}
-              min={8}
-              onChange={(value) => updateSelected((e) => ({ ...e, height: value }), '修改尺寸')}
-            />
-          </div>
-
-          <SliderField
-            label="旋转"
-            value={primary.rotation}
-            min={-180}
-            max={180}
-            step={1}
-            suffix="°"
-            onChange={(value) => updateSelected((e) => ({ ...e, rotation: value }), '修改旋转')}
-            onReset={() => updateSelected((e) => ({ ...e, rotation: 0 }), '重置旋转')}
-          />
-          <SliderField
-            label="不透明度"
-            value={Math.round(primary.opacity * 100)}
-            min={0}
-            max={100}
-            step={1}
-            suffix="%"
-            onChange={(value) => updateSelected((e) => ({ ...e, opacity: value / 100 }), '修改透明度')}
-          />
-          <SliderField
-            label="阴影"
-            value={Math.round((primary.shadow ?? 0) * 100)}
-            min={0}
-            max={100}
-            step={1}
-            suffix="%"
-            onChange={(value) => updateSelected((e) => ({ ...e, shadow: value / 100 }), '修改阴影')}
-          />
-        </Section>
-
-        {/* 层级 */}
-        <Section title="层级">
-          <div className="grid grid-cols-4 gap-1.5">
-            <LayerBtn title="置于顶层" onClick={() => bringToFront()}>
-              <ArrowUpToLine className="h-3.5 w-3.5" />
-            </LayerBtn>
-            <LayerBtn title="上移一层" onClick={() => bringForward()}>
-              <ChevronUp className="h-3.5 w-3.5" />
-            </LayerBtn>
-            <LayerBtn title="下移一层" onClick={() => sendBackward()}>
-              <ChevronDown className="h-3.5 w-3.5" />
-            </LayerBtn>
-            <LayerBtn title="置于底层" onClick={() => sendToBack()}>
-              <ArrowDownToLine className="h-3.5 w-3.5" />
-            </LayerBtn>
-          </div>
-        </Section>
-
-        {/* 类型专属属性 */}
-        {!multi && <TypeSpecific element={primary} />}
-      </div>
-    </div>
+    </PatchContext.Provider>
   )
 }
 
@@ -184,7 +262,7 @@ export function Inspector() {
  * ------------------------------------------------------------------ */
 
 function TypeSpecific({ element }: { element: AlbumElement }) {
-  const updateSelected = useEditorStore((state) => state.updateSelected)
+  const updateSelected = usePatch()
 
   const patchData = (patch: Record<string, unknown>, label: string) =>
     updateSelected(
@@ -279,7 +357,9 @@ function TypeSpecific({ element }: { element: AlbumElement }) {
             </div>
             <div className="space-y-1">
               {element.data.points.map((point, index) => (
-                <div key={`${point.name}-${index}`} className="flex items-center gap-2">
+                // key 不能带上 point.name：改名会让 React 卸载重建这个 input，
+                // 于是每敲一个字就丢一次焦点（只能改一个字）
+                <div key={index} className="flex items-center gap-2">
                   <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-clay-600/25 text-[9px] text-clay-400">
                     {index + 1}
                   </span>
@@ -328,6 +408,7 @@ function PhotoSettings({
   element: Extract<AlbumElement, { kind: 'photo' }>
   patchData: PatchData
 }) {
+  const updateSelected = usePatch()
   return (
     <>
       <Section title="照片样式">
@@ -414,7 +495,7 @@ function PhotoSettings({
             step={1}
             suffix="px"
             onChange={(value) =>
-              useEditorStore.getState().updateSelected((e) => ({ ...e, radius: value }), '修改圆角')
+              updateSelected((e) => ({ ...e, radius: value }), '修改圆角')
             }
           />
           <label className="flex items-center justify-between rounded-lg bg-ink-800/50 px-2.5 py-1.5">
@@ -448,7 +529,7 @@ function TextSettings({
   element: TextElement
   patchData: PatchData
 }) {
-  const updateSelected = useEditorStore((state) => state.updateSelected)
+  const updateSelected = usePatch()
 
   return (
     <>
@@ -585,20 +666,43 @@ function TextSettings({
           onChange={(value) => patchData({ color: value }, '修改文字颜色')}
         />
         <button
-          onClick={() =>
+          onClick={() => {
+            // 真正按内容量一次文字宽度（原来只是 width + 60，名不副实）
+            const measured = measureTextWidth(element.data)
             updateSelected(
-              (e) => ({ ...e, width: e.width + 60 }),
-              '加宽文本框',
+              (e) => ({ ...e, width: Math.max(48, Math.ceil(measured) + 16) }),
+              '适应文字宽度',
             )
-          }
+          }}
           className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-ink-800/50 py-1.5 text-[10px] text-ink-400 transition-colors hover:bg-ink-700/60 hover:text-ink-200"
         >
           <RotateCcw className="h-3 w-3" />
-          自动适应文字宽度
+          适应文字宽度
         </button>
       </Section>
     </>
   )
+}
+
+/** 用 canvas 量一次文字宽度，用于「适应文字宽度」 */
+function measureTextWidth(data: TextElement['data']): number {
+  const lines = data.text.split('\n')
+  const font = `${data.italic ? 'italic ' : ''}${data.fontWeight} ${data.fontSize}px ${data.fontFamily}`
+  if (typeof document === 'undefined') {
+    // SSR / 无 DOM 环境下的保守估计：按字号估算平均字宽
+    const longest = lines.reduce((max, line) => Math.max(max, line.length), 0)
+    return longest * data.fontSize
+  }
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return data.fontSize * 10
+  ctx.font = font
+  let widest = 0
+  for (const line of lines) {
+    const spacing = data.letterSpacing * Math.max(1, line.length - 1)
+    widest = Math.max(widest, ctx.measureText(line).width + spacing)
+  }
+  return widest
 }
 
 function NoteSettings({ element, patchData }: { element: NoteElement; patchData: PatchData }) {
@@ -856,18 +960,40 @@ function NumberField({
   min?: number
   max?: number
 }) {
+  /**
+   * 输入过程中保留用户自己敲的字符串。
+   *
+   * 不能把 `Number(event.target.value)` 直接写回 store：`Number('')` 是 0，
+   * 于是「清空输入框准备重打」会让元素瞬间跳到 0；中间态字符串（比如
+   * 只敲了一个 `-`）也会被当成合法数字。这里只在能解析时才上报，
+   * 并在失焦时把输入框恢复成真实值。
+   */
+  const [draft, setDraft] = useState<string | null>(null)
+  const shown = draft ?? String(Math.round(value))
+
   return (
     <label className="flex items-center gap-1.5 rounded-lg bg-ink-800/50 px-2 py-1">
       <span className="w-3 shrink-0 text-[10px] text-ink-500">{label}</span>
       <input
         type="number"
-        value={Math.round(value)}
+        value={shown}
         min={min}
         max={max}
         onChange={(event) => {
-          const next = Number(event.target.value)
-          if (Number.isFinite(next)) onChange(next)
+          const raw = event.target.value
+          if (raw.trim() === '') {
+            setDraft(raw)
+            return
+          }
+          const next = Number(raw)
+          if (!Number.isFinite(next)) {
+            setDraft(raw)
+            return
+          }
+          setDraft(raw)
+          onChange(next)
         }}
+        onBlur={() => setDraft(null)}
         className="w-full min-w-0 bg-transparent text-right text-[11px] text-ink-100 outline-none"
       />
     </label>
@@ -893,10 +1019,14 @@ function SliderField({
   onChange: (value: number) => void
   onReset?: () => void
 }) {
+  // input[type=range] 需要一个可访问名，否则读屏软件只会念「滑块」
+  const inputId = `slider-${label}`
   return (
     <div>
       <div className="mb-1 flex items-center justify-between">
-        <span className="text-[10px] text-ink-500">{label}</span>
+        <label htmlFor={inputId} className="text-[10px] text-ink-500">
+          {label}
+        </label>
         <span className="flex items-center gap-1">
           <span className="text-[10px] tabular-nums text-ink-400">
             {Number.isInteger(value) ? value : value.toFixed(2)}
@@ -914,11 +1044,13 @@ function SliderField({
         </span>
       </div>
       <input
+        id={inputId}
         type="range"
         min={min}
         max={max}
         step={step}
         value={value}
+        aria-label={label}
         onChange={(event) => onChange(Number(event.target.value))}
       />
     </div>
@@ -938,11 +1070,15 @@ function ColorRow({
     <div>
       {label && <div className="mb-1 text-[10px] text-ink-500">{label}</div>}
       <div className="flex items-center gap-1.5">
-        <label className="relative h-6 w-6 shrink-0 overflow-hidden rounded-md border border-white/15">
+        <label
+          className="relative h-6 w-6 shrink-0 overflow-hidden rounded-md border border-white/15"
+          title={`${label ?? '颜色'}：${value}`}
+        >
           <span className="absolute inset-0" style={{ backgroundColor: value }} />
           <input
             type="color"
             value={value.startsWith('#') ? value : '#000000'}
+            aria-label={`${label ?? '颜色'}（当前 ${value}）`}
             onChange={(event) => onChange(event.target.value)}
             className="absolute inset-0 cursor-pointer opacity-0"
           />
@@ -993,21 +1129,24 @@ function IconBtn({
   title,
   onClick,
   danger,
+  disabled,
 }: {
   children: React.ReactNode
   title: string
   onClick: () => void
   danger?: boolean
+  disabled?: boolean
 }) {
   return (
     <button
-      className={`flex h-6 w-6 items-center justify-center rounded-md transition-colors ${
+      className={`flex h-6 w-6 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
         danger
           ? 'text-ink-400 hover:bg-clay-600 hover:text-white'
           : 'text-ink-400 hover:bg-ink-700 hover:text-ink-100'
       }`}
       onClick={onClick}
       title={title}
+      disabled={disabled}
     >
       {children}
     </button>
@@ -1018,16 +1157,19 @@ function LayerBtn({
   children,
   title,
   onClick,
+  disabled,
 }: {
   children: React.ReactNode
   title: string
   onClick: () => void
+  disabled?: boolean
 }) {
   return (
     <button
-      className="flex h-8 items-center justify-center rounded-lg bg-ink-800/60 text-ink-400 transition-colors hover:bg-ink-700 hover:text-ink-100"
+      className="flex h-8 items-center justify-center rounded-lg bg-ink-800/60 text-ink-400 transition-colors hover:bg-ink-700 hover:text-ink-100 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-ink-800/60"
       onClick={onClick}
       title={title}
+      disabled={disabled}
     >
       {children}
     </button>

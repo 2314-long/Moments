@@ -53,7 +53,13 @@ export function useToast() {
 export function Toast({ toast }: { toast: ToastState | null }) {
   if (!toast) return null
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-8 z-[60] flex justify-center px-4">
+    <div
+      className="pointer-events-none fixed inset-x-0 bottom-8 z-[60] flex justify-center px-4"
+      // 读屏软件需要 live region 才会播报「已保存 / 已删除」
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >
       <div
         key={toast.id}
         className="pointer-events-auto flex animate-toast-in items-center gap-3 rounded-full border border-white/10 bg-ink-800/95 py-2 pl-4 pr-2 shadow-2xl backdrop-blur-xl"

@@ -141,10 +141,6 @@ export function snapAngle(angle: number, step = 15, tolerance = 4): number {
   return Math.round(normalized * 10) / 10
 }
 
-export function angleFromCenter(center: Vec2, point: Vec2): number {
-  return (Math.atan2(point.y - center.y, point.x - center.x) / DEG + 90 + 360) % 360
-}
-
 export function distance(a: Vec2, b: Vec2): number {
   return Math.hypot(a.x - b.x, a.y - b.y)
 }

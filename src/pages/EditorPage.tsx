@@ -42,15 +42,14 @@ export function EditorPage() {
   const loadAlbum = useEditorStore((state) => state.loadAlbum)
   const closeAlbum = useEditorStore((state) => state.closeAlbum)
   const libraryAlbum = useLibraryStore((state) => state.albums.find((a) => a.id === albumId))
+  const libraryReady = useLibraryStore((state) => state.ready)
   const degraded = useLibraryStore((state) => state.degraded)
   const { toast, show } = useToast()
 
   const [leftPanel, setLeftPanelState] = useState<LeftPanel>('insert')
-  const [notFound, setNotFound] = useState(false)
   const [saveError, setSaveError] = useState(false)
 
   const activePageId = useEditorStore((state) => state.activePageId)
-  const spreadSecondPageId = useEditorStore((state) => state.spreadSecondPageId)
   const zoom = useEditorStore((state) => state.zoom)
   const showGrid = useEditorStore((state) => state.showGrid)
   const rightPanelOpen = useEditorStore((state) => state.rightPanelOpen)
@@ -62,14 +61,30 @@ export function EditorPage() {
 
   /* ---------------------------------------------------------- 载入 */
 
+  /**
+   * 只在「换了另一本册子」时把存档读进草稿。
+   *
+   * 这里**刻意不把 libraryAlbum 放进依赖**：自动保存会通过 persistAlbum
+   * 把草稿写回 libraryStore，library 里那一本的**对象引用**随之改变，
+   * libraryAlbum 于是变成一个「新的」值。若把它列入依赖，每次自动保存
+   * 落地都会重跑这个 effect —— 而 cleanup 里的 closeAlbum() 会紧接着
+   * 清空撤销栈、清空选中、并把 activePageId 拨回第 1 页，也就是
+   * 「编辑后大约 900ms，撤销按钮突然变灰、属性面板被清空、画布跳回封面」。
+   *
+   * 草稿的所有权属于编辑器：存档只在打开时流入一次，之后由自动保存
+   * 单向写回。因此依赖只保留「打开的是哪一本」「存档是否已就绪」
+   * 以及两个稳定的 store 方法。
+   *
+   * libraryReady 参与依赖是必要的：冷启动时 library 里先只有内置 demo
+   * （首帧不阻塞渲染的代价），用户自己那本要等 IndexedDB 读完才出现。
+   */
   useEffect(() => {
-    if (!libraryAlbum) {
-      setNotFound(true)
-      return
-    }
-    loadAlbum(libraryAlbum)
+    const source = useLibraryStore.getState().albums.find((a) => a.id === albumId)
+    // 存档还没读完时不要急着判定「找不到」，否则硬刷新会永久停在 404
+    if (!source) return
+    loadAlbum(source)
     return () => closeAlbum()
-  }, [albumId, libraryAlbum, loadAlbum, closeAlbum])
+  }, [albumId, libraryReady, loadAlbum, closeAlbum])
 
   /* ---------------------------------------------------------- 自动保存 */
 
@@ -121,7 +136,10 @@ export function EditorPage() {
    * 计算当前应该显示哪两页。
    *
    * 规则贴近实体书：封面单独占右侧（左边为空），其余页面按
-   * [偶数索引, 奇数索引] 成对；但必须保证「当前页」一定可见。
+   * [当前页, 下一页] 成对；但必须保证「当前页」一定可见。
+   *
+   * 注意：右页永远不是 activePageId，所以 store 里所有按元素 id 定位的
+   * 写操作都必须跨页查找（见 editorStore.withPagesOfElements）。
    */
   const visiblePages = useMemo((): [Page | null, Page | null] => {
     if (!album) return [null, null]
@@ -129,24 +147,13 @@ export function EditorPage() {
     const index = pages.findIndex((p) => p.id === activePageId)
     if (index === -1) return [pages[0] ?? null, pages[1] ?? null]
 
-    if (spreadSecondPageId) {
-      const other = pages.find((p) => p.id === spreadSecondPageId)
-      if (other) {
-        return pages[index].id === other.id
-          ? [pages[index], null]
-          : index < pages.findIndex((p) => p.id === spreadSecondPageId)
-            ? [pages[index], other]
-            : [other, pages[index]]
-      }
-    }
-
     if (pages[index].role === 'cover') return [null, pages[index]]
 
     // 高亮页固定放在左页，右侧显示它的下一页
     const left = pages[index]
     const right = pages[index + 1] ?? null
     return [left, right]
-  }, [album, activePageId, spreadSecondPageId])
+  }, [album, activePageId])
 
   /* ---------------------------------------------------------- 快捷键 */
 
@@ -215,17 +222,17 @@ export function EditorPage() {
       if (event.key === 'Delete' || event.key === 'Backspace') {
         if (store.selection.length) {
           event.preventDefault()
-          const pageId = store.activePageId
-          const before = store.album
+          // 记下删除前的选中项：撤销会连选择状态一起恢复，这里只是让
+          // 撤销之后仍然把你刚删的东西选回来，方便继续操作
+          const removed = store.selection
           store.removeElements()
           show('已删除元素', {
             tone: 'default',
             action: {
               label: '撤销',
               run: () => {
-                store.undo()
-                void pageId
-                void before
+                useEditorStore.getState().undo()
+                useEditorStore.getState().select(removed)
               },
             },
           })
@@ -250,6 +257,16 @@ export function EditorPage() {
   }, [handleSaveNow, show])
 
   /* ---------------------------------------------------------- 未找到 */
+
+  /**
+   * 「找不到」是**派生值**，不是一个会锁死的状态。
+   *
+   * 之前这里用 useState 把 notFound 置 true 后永不复位，于是「用户自己的
+   * 纪念册 + 直接访问 /edit 链接（硬刷新 / 新标签）」会永久停在 404：
+   * 首帧 library 里只有内置 demo。改成派生之后，存档读完就能自愈
+   * （载入 effect 依赖 libraryReady，会再跑一次）。
+   */
+  const notFound = libraryReady && !libraryAlbum
 
   if (notFound) {
     return (
