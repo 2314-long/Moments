@@ -111,7 +111,7 @@ export interface BookSpreadProps {
  * ------------------------------------------------------------------ */
 
 /** 两页之间的装订缝 */
-export const BOOK_GAP = 14
+export const BOOK_GAP = 0
 
 /**
  * 折痕暗部从纸边往里渗透的距离（页面坐标）。
@@ -423,26 +423,9 @@ function BookSpreadImpl({
           className="absolute inset-0"
           style={{ transformStyle: 'preserve-3d' }}
         >
-          {/*
-            ── 装订缝：两页之间那条**真实的缝** ──────────────────────
-            它由「页面的厚度侧面 + 下面这层窄缝」共同形成 ——
-            两页各自的厚度切面在缝隙两侧各立起 10 页px，中间露出这层暗色。
-            缝的渐变从中心向两侧收，所以看起来是两张纸往书脊里陷进去，
-            而不是页面上压了一条东西。它画在页面之下（zIndex 1），
-            纸张一盖上去就只剩缝里露出的那一条。
-          */}
-          <div
-            className="pointer-events-none absolute top-0"
-            data-gutter=""
-            style={{
-              left: size.width - 8,
-              width: BOOK_GAP + 16,
-              height: size.height,
-              zIndex: 1,
-              background:
-                'linear-gradient(90deg, rgba(0,0,0,0) 0%, rgba(26,21,15,0.62) 30%, rgba(8,6,4,0.88) 50%, rgba(26,21,15,0.62) 70%, rgba(0,0,0,0) 100%)',
-            }}
-          />
+          {/* 装订缝：BOOK_GAP = 0 时两页直接相连，不再画独立的缝层
+              （否则翻页时纸叶盖住缝、翻完缝又露出来，造成前后画面变化）。
+              原先这层只在两页之间有缝隙时才需要 —— 它画出缝里露出的暗色。 */}
 
           {/* 当前跨页的两块纸板 */}
           <div
@@ -456,13 +439,15 @@ function BookSpreadImpl({
             }}
           >
             {cardLeft ? (
-              <BookPage page={cardLeft} size={size} side="left" thickness={thickness} face="front" />
+              <BookPage page={cardLeft} size={size} side="left" thickness={thickness} face="front" hideSpineEdge={BOOK_GAP === 0} />
             ) : (
               <div className="absolute inset-0">{emptySlot}</div>
             )}
 
-            {/* 左页内缘的折痕：在页面自己的矩形里，贴着真正的纸边 */}
-            <PageFoldShade side="left" height={size.height} />
+            {/* 左页内缘的折痕：BOOK_GAP=0 时两页直接相连，
+                不再画折痕——纸叶是平板、没有凹陷，折痕只在静止态出现，
+                会导致翻页时凹陷消失、翻完又回来。 */}
+            {BOOK_GAP > 0 && <PageFoldShade side="left" height={size.height} />}
 
             {/* 翻动纸板投在左页上的阴影 */}
             <div
@@ -485,13 +470,13 @@ function BookSpreadImpl({
             }}
           >
             {cardRight ? (
-              <BookPage page={cardRight} size={size} side="right" thickness={thickness} face="front" />
+              <BookPage page={cardRight} size={size} side="right" thickness={thickness} face="front" hideSpineEdge={BOOK_GAP === 0} />
             ) : (
               <div className="absolute inset-0">{emptySlot}</div>
             )}
 
-            {/* 右页内缘的折痕：同样贴在右页自己的左边 */}
-            <PageFoldShade side="right" height={size.height} />
+            {/* 右页内缘的折痕：同理，BOOK_GAP=0 时不画 */}
+            {BOOK_GAP > 0 && <PageFoldShade side="right" height={size.height} />}
 
             {/* 翻动纸板投在右页上的阴影 */}
             <div

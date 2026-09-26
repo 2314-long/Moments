@@ -322,7 +322,7 @@ check(
 )
 
 /** 与 BookSpread 的 BOOK_GAP 保持一致 */
-const BOOK_GAP = 14
+const BOOK_GAP = 0
 /** 最接近落平的那一帧：此时纸叶应当已经几乎完全落在目标页上 */
 const NEAR = 0.99
 const MID = [0.15, 0.35, 0.5, 0.7, 0.9, NEAR]
