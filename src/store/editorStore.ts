@@ -94,8 +94,8 @@ export interface EditorState {
     asset: PhotoAsset,
     opts?: { x?: number; y?: number; style?: PhotoStyle; pageId?: string },
   ) => void
-  addTextElement: (preset: TextPreset, opts?: { x?: number; y?: number; pageId?: string }) => void
-  addArtTextElement: (templateId?: ArtTextTemplate, opts?: { x?: number; y?: number; pageId?: string }) => void
+  addTextElement: (preset: TextPreset, opts?: { x?: number; y?: number; pageId?: string; text?: string }) => void
+  addArtTextElement: (templateId?: ArtTextTemplate, opts?: { x?: number; y?: number; pageId?: string; text?: string }) => void
   addStickerElement: (
     stickerId: string,
     opts?: { x?: number; y?: number; pageId?: string },
@@ -499,7 +499,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const pageId = get().resolveTargetPage(opts.pageId)
     if (!pageId) return
     const token = TEXT_PRESETS[preset]
-    const text = token.placeholder
+    const text = opts.text ?? token.placeholder
     const lineCount = text.split('\n').length
     const height = Math.ceil(token.fontSize * token.lineHeight * lineCount + 8)
     const element: AlbumElement = {
@@ -545,7 +545,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       width: templateId === 'seal' ? 180 : 430, height: templateId === 'seal' ? 180 : 104,
       rotation: byTemplate.rotation, opacity: 1, locked: false, shadow: 0.18,
       data: {
-        text: byTemplate.text, preset: 'title', fontFamily: byTemplate.font, fontSize: templateId === 'seal' ? 58 : 42,
+        text: opts.text ?? byTemplate.text, preset: 'title', fontFamily: byTemplate.font, fontSize: templateId === 'seal' ? 58 : 42,
         fontWeight: templateId === 'magazine' ? 800 : 700, italic: false, letterSpacing: templateId === 'cinema' ? 5 : 1.5,
         lineHeight: 1.25, color: byTemplate.color, align: 'center', templateId, accentColor: byTemplate.accent,
       },

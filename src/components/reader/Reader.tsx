@@ -36,6 +36,7 @@ export interface ReaderProps {
   onIndexChange?: (index: number) => void
   /** Select a page after a structural edit; optionally animate forward to it. */
   navigationRequest?: { token: number; pageId: string; turn?: boolean }
+  onMoveTextElement?: (elementId: string, x: number, y: number) => void
 }
 
 /** 完整翻页时长。真实纸板翻动需要让人看清「抬起 → 立起 → 越过 → 落下」 */
@@ -345,7 +346,7 @@ function useFlipDriver(options: {
  * Reader
  * ------------------------------------------------------------------ */
 
-export function Reader({ album, initialIndex = 0, onIndexChange, navigationRequest }: ReaderProps) {
+export function Reader({ album, initialIndex = 0, onIndexChange, navigationRequest, onMoveTextElement }: ReaderProps) {
   const spreads = useMemo(
     () => album.pageLayout === 'duplex' ? buildDuplexSpreads(album.pages) : buildLegacySpreads(album.pages),
     [album.pageLayout, album.pages],
@@ -489,6 +490,7 @@ export function Reader({ album, initialIndex = 0, onIndexChange, navigationReque
     const onPointerDown = (event: PointerEvent) => {
       // 只响应主键：右键 / 中键不该翻页
       if (event.button !== 0) return
+      if (event.target instanceof Element && event.target.closest('[data-text-move]')) return
       dragStart.current = { x: event.clientX, y: event.clientY, t: performance.now(), active: false }
     }
 
@@ -726,6 +728,7 @@ export function Reader({ album, initialIndex = 0, onIndexChange, navigationReque
         flip={flipVisual}
         zoomed={zoomed}
         photosReady={photosReady}
+        onMoveTextElement={onMoveTextElement}
       />
 
       {/* 左右翻页热区 */}
@@ -824,6 +827,7 @@ function BookViewport({
   flip,
   zoomed,
   photosReady,
+  onMoveTextElement,
 }: {
   album: Album
   left: Page | null
@@ -831,6 +835,7 @@ function BookViewport({
   flip: FlipVisual | null
   zoomed: boolean
   photosReady: boolean
+  onMoveTextElement?: (elementId: string, x: number, y: number) => void
 }) {
   const { ref, scale: fitScale } = useFitScale(album.pageSize, 86)
   const scale = zoomed ? 1 : fitScale
@@ -876,6 +881,15 @@ function BookViewport({
           ) : (
             <BookSpreadSkeleton size={size} />
           )}
+          {onMoveTextElement && (
+            <TextMoveOverlays
+              pages={[left, right]}
+              pageWidth={size.width}
+              pageHeight={size.height}
+              scale={scale}
+              onMove={onMoveTextElement}
+            />
+          )}
         </div>
 
         {/* 装订封面边缘：让「这是一本精装册子」在书本外沿也有体现 */}
@@ -902,6 +916,79 @@ function BookViewport({
           }}
         />
       </div>
+    </div>
+  )
+}
+
+function TextMoveOverlays({
+  pages,
+  pageWidth,
+  pageHeight,
+  scale,
+  onMove,
+}: {
+  pages: [Page | null, Page | null]
+  pageWidth: number
+  pageHeight: number
+  scale: number
+  onMove: (elementId: string, x: number, y: number) => void
+}) {
+  const [drag, setDrag] = useState<{ id: string; x: number; y: number } | null>(null)
+  const dragRef = useRef<{ id: string; startX: number; startY: number; pageX: number; pageY: number; x: number; y: number } | null>(null)
+
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent) => {
+      const active = dragRef.current
+      if (!active) return
+      const x = active.pageX + (event.clientX - active.startX) / scale
+      const y = active.pageY + (event.clientY - active.startY) / scale
+      active.x = x
+      active.y = y
+      setDrag({ id: active.id, x, y })
+    }
+    const onPointerUp = () => {
+      const active = dragRef.current
+      dragRef.current = null
+      if (!active) return
+      if (active.x !== active.pageX || active.y !== active.pageY) onMove(active.id, active.x, active.y)
+      setDrag(null)
+    }
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', onPointerUp)
+    window.addEventListener('pointercancel', onPointerUp)
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', onPointerUp)
+      window.removeEventListener('pointercancel', onPointerUp)
+    }
+  }, [onMove, scale])
+
+  return (
+    <div className="pointer-events-none absolute inset-0" style={{ zIndex: 60 }}>
+      {pages.map((page, pageNumber) => page ? (
+        <div key={page.id} className="absolute top-0" style={{ left: pageNumber === 0 ? 0 : pageWidth + 14, width: pageWidth, height: pageHeight }}>
+          {page.elements.filter((element) => element.kind === 'text' || element.kind === 'art-text').map((element) => {
+            const x = drag?.id === element.id ? drag.x : element.x
+            const y = drag?.id === element.id ? drag.y : element.y
+            return (
+              <div
+                key={element.id}
+                className="pointer-events-auto group absolute cursor-move rounded-sm border border-transparent hover:border-clay-500/80 hover:bg-clay-500/5 active:border-clay-400"
+                data-text-move=""
+                title="按住拖动文字"
+                style={{ left: x, top: y, width: element.width, height: element.height, transform: `rotate(${element.rotation}deg)`, touchAction: 'none' }}
+                onPointerDown={(event) => {
+                  if (event.button !== 0) return
+                  event.preventDefault()
+                  event.stopPropagation()
+                  dragRef.current = { id: element.id, startX: event.clientX, startY: event.clientY, pageX: element.x, pageY: element.y, x: element.x, y: element.y }
+                  setDrag({ id: element.id, x: element.x, y: element.y })
+                }}
+              />
+            )
+          })}
+        </div>
+      ) : null)}
     </div>
   )
 }

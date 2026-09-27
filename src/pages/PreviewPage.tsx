@@ -9,6 +9,17 @@ import { Toast, useToast } from '@/components/ui/Toast'
 import { PAPER_LIST } from '@/lib/designTokens'
 import { persistAlbum } from '@/persistence'
 import { uploadPhotos } from '@/services/uploadService'
+import type { ArtTextTemplate, TextElement, ArtTextElement } from '@/types/album'
+import { TEXT_PRESETS } from '@/lib/designTokens'
+
+const ART_TEXT_OPTIONS: Array<{ id: ArtTextTemplate; name: string; sample: string }> = [
+  { id: 'handwritten', name: '手写', sample: '写下这一刻' },
+  { id: 'travel', name: '旅行', sample: '抵达山海之间' },
+  { id: 'cinema', name: '电影', sample: 'THE MOMENT' },
+  { id: 'magazine', name: '杂志', sample: 'WEEKEND NOTES' },
+  { id: 'seal', name: '印章', sample: '纪念' },
+  { id: 'calligraphy', name: '书法', sample: '山川入梦' },
+]
 
 /**
  * 沉浸式预览。
@@ -32,6 +43,10 @@ export function PreviewPage() {
   const [current, setCurrent] = useState(initialIndex)
   const [navigationRequest, setNavigationRequest] = useState<{ token: number; pageId: string; turn?: boolean }>()
   const [paperPickerOpen, setPaperPickerOpen] = useState(false)
+  const [textEditor, setTextEditor] = useState<'text' | 'art' | null>(null)
+  const [textDraft, setTextDraft] = useState('')
+  const [artTemplate, setArtTemplate] = useState<ArtTextTemplate>('travel')
+  const [editingTextId, setEditingTextId] = useState<string | null>(null)
   const photoInput = useRef<HTMLInputElement>(null)
 
   // 离开阅读模式时清理编辑器草稿，避免下次进编辑器带着旧状态
@@ -89,6 +104,57 @@ export function PreviewPage() {
     setPaperPickerOpen(false)
   }
 
+  const currentTextElements = (currentPage?.elements ?? []).filter(
+    (element): element is TextElement | ArtTextElement => element.kind === 'text' || element.kind === 'art-text',
+  )
+
+  const openTextEditor = (kind: 'text' | 'art') => {
+    setTextEditor(kind)
+    setEditingTextId(null)
+    setArtTemplate('travel')
+    setTextDraft(kind === 'text' ? TEXT_PRESETS.body.placeholder : ART_TEXT_OPTIONS[1].sample)
+  }
+
+  const editExistingText = (element: TextElement | ArtTextElement) => {
+    setTextEditor(element.kind === 'art-text' ? 'art' : 'text')
+    setEditingTextId(element.id)
+    setTextDraft(element.data.text)
+    if (element.kind === 'art-text') setArtTemplate(element.data.templateId)
+  }
+
+  const saveText = () => {
+    const value = textDraft.trim()
+    if (!value) {
+      show('先输入文字内容', { tone: 'error' })
+      return
+    }
+    void (async () => {
+      if (editingTextId) {
+        await withCurrentPage(() => {
+          useEditorStore.getState().updateElements(
+            [editingTextId],
+            (element) => {
+              if (element.kind === 'text') return { ...element, data: { ...element.data, text: value } }
+              if (element.kind === 'art-text') return { ...element, data: { ...element.data, text: value, templateId: artTemplate } }
+              return element
+            },
+            '编辑文字',
+          )
+        })
+        show('文字已更新')
+      } else {
+        await withCurrentPage((pageId) => {
+          const editor = useEditorStore.getState()
+          if (textEditor === 'art') editor.addArtTextElement(artTemplate, { pageId, text: value })
+          else editor.addTextElement('body', { pageId, text: value })
+        })
+        show('文字已添加')
+      }
+      setTextEditor(null)
+      setEditingTextId(null)
+    })()
+  }
+
   return (
     <div
       className="relative h-full w-full overflow-hidden"
@@ -101,14 +167,23 @@ export function PreviewPage() {
         initialIndex={initialIndex}
         onIndexChange={setCurrent}
         navigationRequest={navigationRequest}
+        onMoveTextElement={(elementId, x, y) => {
+          void withCurrentPage(() => {
+            useEditorStore.getState().updateElements(
+              [elementId],
+              (element) => ({ ...element, x, y }),
+              '移动文字',
+            )
+          })
+        }}
       />
 
       {/* 打开书后的轻量 DIY 工具栏：不离开实体书阅读体验。 */}
       <div className="absolute left-1/2 top-5 z-40 flex -translate-x-1/2 items-center gap-1 rounded-2xl border border-white/10 bg-ink-850/92 p-1.5 shadow-xl backdrop-blur-xl">
         <button className="reader-diy-btn" onClick={() => setPaperPickerOpen(true)} title="在当前纸张后添加一张双面纸"><Plus className="h-3.5 w-3.5" />添加纸张</button>
         <button className="reader-diy-btn" onClick={() => photoInput.current?.click()} title="上传照片并贴到当前页"><ImagePlus className="h-3.5 w-3.5" />照片</button>
-        <button className="reader-diy-btn" onClick={() => void withCurrentPage((pageId) => useEditorStore.getState().addTextElement('body', { pageId }))} title="在当前页添加文字"><Type className="h-3.5 w-3.5" />文字</button>
-        <button className="reader-diy-btn" onClick={() => void withCurrentPage((pageId) => useEditorStore.getState().addArtTextElement('travel', { pageId }))} title="在当前页添加艺术字"><Sparkles className="h-3.5 w-3.5" />艺术字</button>
+        <button className="reader-diy-btn" onClick={() => openTextEditor('text')} title="输入并添加文字"><Type className="h-3.5 w-3.5" />文字</button>
+        <button className="reader-diy-btn" onClick={() => openTextEditor('art')} title="选择样式并编辑艺术字"><Sparkles className="h-3.5 w-3.5" />艺术字</button>
       </div>
       <input ref={photoInput} type="file" accept="image/*" multiple className="hidden" onChange={(event) => {
         const files = Array.from(event.target.files ?? [])
@@ -122,6 +197,73 @@ export function PreviewPage() {
           } catch { show('照片上传失败，请重试', { tone: 'error' }) }
         })()
       }} />
+
+      {textEditor && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-ink-850 p-5 shadow-2xl">
+            <div className="mb-4 flex items-start justify-between">
+              <div>
+                <h2 className="text-base text-ink-100">{editingTextId ? '编辑文字' : textEditor === 'art' ? '添加艺术字' : '添加文字'}</h2>
+                <p className="mt-1 text-xs text-ink-500">输入内容后即可放到当前页。</p>
+              </div>
+              <button className="tool-btn h-7 w-7" onClick={() => setTextEditor(null)} title="关闭"><X className="h-3.5 w-3.5" /></button>
+            </div>
+
+            {textEditor === 'art' && (
+              <div className="mb-3 grid grid-cols-3 gap-2">
+                {ART_TEXT_OPTIONS.map((option) => (
+                  <button
+                    key={option.id}
+                    onClick={() => {
+                      setArtTemplate(option.id)
+                      if (!editingTextId) setTextDraft(option.sample)
+                    }}
+                    className={`rounded-lg border px-2 py-2 text-left transition ${artTemplate === option.id ? 'border-clay-500 bg-clay-500/10 text-ink-100' : 'border-white/10 bg-ink-800/50 text-ink-400 hover:border-white/20'}`}
+                  >
+                    <span className="block text-xs">{option.name}</span>
+                    <span className="mt-1 block truncate text-[10px] opacity-70">{option.sample}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <textarea
+              autoFocus
+              value={textDraft}
+              onChange={(event) => setTextDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') saveText()
+                if (event.key === 'Escape') setTextEditor(null)
+              }}
+              rows={4}
+              placeholder="写下想放在这一页的内容…"
+              className="field w-full resize-y text-sm leading-relaxed"
+            />
+
+            {currentTextElements.length > 0 && !editingTextId && (
+              <div className="mt-4">
+                <div className="mb-2 text-[10px] text-ink-500">也可以修改当前页已有文字</div>
+                <div className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto">
+                  {currentTextElements.map((element) => (
+                    <button
+                      key={element.id}
+                      onClick={() => editExistingText(element)}
+                      className="max-w-full truncate rounded-lg bg-ink-800 px-2.5 py-1.5 text-left text-[11px] text-ink-300 hover:bg-ink-700"
+                    >
+                      {element.kind === 'art-text' ? '艺术字 · ' : '文字 · '}{element.data.text}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button className="btn-ghost" onClick={() => setTextEditor(null)}>取消</button>
+              <button className="btn-primary" onClick={saveText}>{editingTextId ? '保存修改' : '添加到页面'}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {paperPickerOpen && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
