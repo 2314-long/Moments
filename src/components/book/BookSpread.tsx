@@ -100,8 +100,8 @@ export interface BookSpreadProps {
   right: Page | null
   /** 翻页中（null 表示静止） */
   flip: FlipVisual | null
-  /** 页面 null 时该槽位的兜底内容（例如封面单独成屏时的硬壳装帧板） */
-  emptySlot?: React.ReactNode
+  /** 页面 null 时的槽位兜底内容（例如首尾页的硬壳封面 / 封底） */
+  emptySlot?: (side: 'left' | 'right') => React.ReactNode
   className?: string
   style?: CSSProperties
 }
@@ -441,7 +441,7 @@ function BookSpreadImpl({
             {cardLeft ? (
               <BookPage page={cardLeft} size={size} side="left" thickness={thickness} face="front" hideSpineEdge={BOOK_GAP === 0} />
             ) : (
-              <div className="absolute inset-0">{emptySlot}</div>
+              <div className="absolute inset-0">{emptySlot?.('left')}</div>
             )}
 
             {/* 左页内缘的折痕：BOOK_GAP=0 时两页直接相连，
@@ -472,7 +472,7 @@ function BookSpreadImpl({
             {cardRight ? (
               <BookPage page={cardRight} size={size} side="right" thickness={thickness} face="front" hideSpineEdge={BOOK_GAP === 0} />
             ) : (
-              <div className="absolute inset-0">{emptySlot}</div>
+              <div className="absolute inset-0">{emptySlot?.('right')}</div>
             )}
 
             {/* 右页内缘的折痕：同理，BOOK_GAP=0 时不画 */}

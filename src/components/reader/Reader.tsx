@@ -871,7 +871,7 @@ function BookViewport({
               left={left}
               right={right}
               flip={flip}
-              emptySlot={<CoverLeafBoard size={size} />}
+              emptySlot={(side) => <CoverLeafBoard size={size} side={side} />}
             />
           ) : (
             <BookSpreadSkeleton size={size} />
@@ -924,9 +924,12 @@ function BookSpreadSkeleton({ size }: { size: { width: number; height: number } 
   )
 }
 
-/** 封面单独成屏时，左侧是一块硬壳装帧纸板（有厚度，不是空白） */
-function CoverLeafBoard({ size }: { size: { width: number; height: number } }) {
+/** 首尾页缺少纸面时，以硬壳封面 / 封底补齐整本书的外侧。 */
+function CoverLeafBoard({ size, side }: { size: { width: number; height: number }; side: 'left' | 'right' }) {
   const thickness = Math.max(4, Math.round(size.height * 0.011))
+  const isFrontCover = side === 'left'
+  const stackSide = isFrontCover ? 'left' : 'right'
+  const spineSide = isFrontCover ? 'right' : 'left'
   return (
     <div className="relative h-full w-full" style={{ transformStyle: 'preserve-3d' }}>
       <div
@@ -944,28 +947,28 @@ function CoverLeafBoard({ size }: { size: { width: number; height: number } }) {
             className="max-w-[62%] font-serif text-sm leading-relaxed"
             style={{ color: 'rgba(232,220,196,0.45)' }}
           >
-            硬壳封面
-            <br />
-            从右边翻开这一页
+            {isFrontCover ? <>硬壳封面<br />从右边翻开这一页</> : '硬壳封底'}
           </p>
         </div>
 
-        {/* 左侧的书口：露出下面压着的纸板边 */}
+        {/* 书本外侧的书口：露出下面压着的纸板边 */}
         <div
-          className="absolute inset-y-0 left-0"
+          className="absolute inset-y-0"
           style={{
             width: thickness,
+            [stackSide]: 0,
             backgroundColor: '#e2d9c6',
             backgroundImage:
               'repeating-linear-gradient(0deg, rgba(90,78,58,0.22) 0 0.7px, rgba(255,255,255,0.30) 0.7px 1.7px)',
           }}
         />
-        {/* 装订侧压暗 */}
+        {/* 封面 / 封底内侧压暗 */}
         <div
-          className="absolute inset-y-0 right-0"
+          className="absolute inset-y-0"
           style={{
+            [spineSide]: 0,
             width: 30,
-            background: 'linear-gradient(270deg, rgba(0,0,0,0.55), rgba(0,0,0,0))',
+            background: `linear-gradient(${isFrontCover ? '270deg' : '90deg'}, rgba(0,0,0,0.55), rgba(0,0,0,0))`,
           }}
         />
       </div>
