@@ -530,19 +530,6 @@ function BookSpreadImpl({
         于是中缝是「两张纸向书脊里陷进去」，而不是「页面上压了一条东西」。
       */}
 
-      {/* 纸板整体落地阴影（挂在最外层，避免 filter 拍平 3D） */}
-      <div
-        className="pointer-events-none absolute"
-        style={{
-          left: 6,
-          right: 6,
-          bottom: -Math.max(10, size.height * 0.02),
-          height: Math.max(16, size.height * 0.035),
-          background: 'radial-gradient(ellipse at center, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0) 72%)',
-          filter: 'blur(6px)',
-          zIndex: 0,
-        }}
-      />
     </div>
   )
 }
