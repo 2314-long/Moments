@@ -27,6 +27,9 @@ export function PagePanel() {
   if (!album) return null
 
   const activePage = album.pages.find((p) => p.id === activePageId)
+  const sheetCount = album.pageLayout === 'duplex'
+    ? new Set(album.pages.map((page) => page.sheetId)).size
+    : album.pages.length
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
@@ -94,7 +97,7 @@ export function PagePanel() {
                   <button
                     className="flex h-5 w-5 items-center justify-center rounded text-ink-400 hover:bg-clay-600 hover:text-white disabled:opacity-30"
                     title="删除这一页"
-                    disabled={album.pages.length <= 1}
+                    disabled={sheetCount <= 1}
                     onClick={(e) => {
                       e.stopPropagation()
                       removePage(page.id)

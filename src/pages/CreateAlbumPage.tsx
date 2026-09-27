@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import type { Album, AlbumTheme, GeoPoint, PhotoAsset } from '@/types/album'
 import { PAGE_HEIGHT, PAGE_WIDTH, THEME_LIST, THEMES } from '@/lib/designTokens'
-import { newAlbumId } from '@/lib/id'
+import { newAlbumId, newPageId } from '@/lib/id'
 import { usePhotoStore } from '@/store/photoStore'
 import { persistAlbum } from '@/persistence'
 import { uploadPhotos } from '@/services/uploadService'
@@ -665,13 +665,25 @@ export function CreateAlbumPage() {
     setCreating(true)
     const now = new Date().toISOString()
     const token = THEMES[theme]
+    const firstSheetId = `sheet_${newPageId()}`
     const album: Album = {
       id: newAlbumId(),
       title: '未命名纪念册',
       theme,
+      pageLayout: 'duplex',
       pages: [{
-        id: `pg_first_${Date.now()}`,
+        id: newPageId(),
+        sheetId: firstSheetId,
+        sheetSide: 'front',
         title: '开始记录',
+        role: 'content',
+        background: { color: token.paper === 'kraft' ? '#e6d3b3' : '#f7f3ea', paper: token.paper, vignette: 0.2 },
+        elements: [],
+      }, {
+        id: newPageId(),
+        sheetId: firstSheetId,
+        sheetSide: 'back',
+        title: '开始记录（背面）',
         role: 'content',
         background: { color: token.paper === 'kraft' ? '#e6d3b3' : '#f7f3ea', paper: token.paper, vignette: 0.2 },
         elements: [],

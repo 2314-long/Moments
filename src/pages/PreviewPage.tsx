@@ -30,6 +30,7 @@ export function PreviewPage() {
   const initialIndex = pageIndex ? Math.max(0, Number(pageIndex) || 0) : 0
   const [thumbsOpen, setThumbsOpen] = useState(false)
   const [current, setCurrent] = useState(initialIndex)
+  const [navigationRequest, setNavigationRequest] = useState<{ token: number; pageId: string; turn?: boolean }>()
   const [paperPickerOpen, setPaperPickerOpen] = useState(false)
   const photoInput = useRef<HTMLInputElement>(null)
 
@@ -63,6 +64,31 @@ export function PreviewPage() {
     if (changed) await persistAlbum(changed)
   }
 
+  const addPaper = (paper: (typeof PAPER_LIST)[number]) => {
+    void (async () => {
+      const existingIds = new Set(album.pages.map((page) => page.id))
+      await withCurrentPage((pageId) => {
+        useEditorStore.getState().addPage({
+          afterPageId: pageId,
+          title: `${paper.name}新页`,
+          background: { color: paper.color, paper: paper.id, lineColor: paper.lineColor, vignette: 0.2 },
+        })
+      })
+      // 从正面翻过去，新纸出现在右侧；末张纸背面则新纸直接展开在右侧。
+      const newFront = useEditorStore.getState().album?.pages.find((page) =>
+        !existingIds.has(page.id) && (album.pageLayout !== 'duplex' || page.sheetSide === 'front'),
+      )
+      if (newFront) {
+        setNavigationRequest((request) => ({
+          token: (request?.token ?? 0) + 1,
+          pageId: newFront.id,
+          turn: album.pageLayout === 'duplex' && currentPage?.sheetSide !== 'back',
+        }))
+      }
+    })()
+    setPaperPickerOpen(false)
+  }
+
   return (
     <div
       className="relative h-full w-full overflow-hidden"
@@ -74,11 +100,12 @@ export function PreviewPage() {
         album={album}
         initialIndex={initialIndex}
         onIndexChange={setCurrent}
+        navigationRequest={navigationRequest}
       />
 
       {/* 打开书后的轻量 DIY 工具栏：不离开实体书阅读体验。 */}
       <div className="absolute left-1/2 top-5 z-40 flex -translate-x-1/2 items-center gap-1 rounded-2xl border border-white/10 bg-ink-850/92 p-1.5 shadow-xl backdrop-blur-xl">
-        <button className="reader-diy-btn" onClick={() => setPaperPickerOpen(true)} title="在当前页后添加一张纸"><Plus className="h-3.5 w-3.5" />添加纸张</button>
+        <button className="reader-diy-btn" onClick={() => setPaperPickerOpen(true)} title="在当前纸张后添加一张双面纸"><Plus className="h-3.5 w-3.5" />添加纸张</button>
         <button className="reader-diy-btn" onClick={() => photoInput.current?.click()} title="上传照片并贴到当前页"><ImagePlus className="h-3.5 w-3.5" />照片</button>
         <button className="reader-diy-btn" onClick={() => void withCurrentPage((pageId) => useEditorStore.getState().addTextElement('body', { pageId }))} title="在当前页添加文字"><Type className="h-3.5 w-3.5" />文字</button>
         <button className="reader-diy-btn" onClick={() => void withCurrentPage((pageId) => useEditorStore.getState().addArtTextElement('travel', { pageId }))} title="在当前页添加艺术字"><Sparkles className="h-3.5 w-3.5" />艺术字</button>
@@ -99,8 +126,8 @@ export function PreviewPage() {
       {paperPickerOpen && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
           <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-ink-850 p-5 shadow-2xl">
-            <div className="mb-4 flex items-start justify-between"><div><h2 className="text-base text-ink-100">选择一张纸</h2><p className="mt-1 text-xs text-ink-500">它会接在当前翻开的页面之后。</p></div><button className="tool-btn h-7 w-7" onClick={() => setPaperPickerOpen(false)}><X className="h-3.5 w-3.5" /></button></div>
-            <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">{PAPER_LIST.map((paper) => <button key={paper.id} className="overflow-hidden rounded-xl border border-white/10 text-left transition hover:border-clay-500" onClick={() => { void withCurrentPage((pageId) => useEditorStore.getState().addPage({ afterPageId: pageId, title: paper.name + '新页', background: { color: paper.color, paper: paper.id, lineColor: paper.lineColor, vignette: 0.2 } })); setPaperPickerOpen(false) }}><span className="block h-16" style={{ backgroundColor: paper.color }} /><span className="block px-2 py-1.5 text-xs text-ink-300">{paper.name}</span></button>)}</div>
+            <div className="mb-4 flex items-start justify-between"><div><h2 className="text-base text-ink-100">选择纸张</h2><p className="mt-1 text-xs text-ink-500">新纸有正反两面，会接在当前纸张后。</p></div><button className="tool-btn h-7 w-7" onClick={() => setPaperPickerOpen(false)}><X className="h-3.5 w-3.5" /></button></div>
+            <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">{PAPER_LIST.map((paper) => <button key={paper.id} className="overflow-hidden rounded-xl border border-white/10 text-left transition hover:border-clay-500" onClick={() => addPaper(paper)}><span className="block h-16" style={{ backgroundColor: paper.color }} /><span className="block px-2 py-1.5 text-xs text-ink-300">{paper.name}</span></button>)}</div>
           </div>
         </div>
       )}

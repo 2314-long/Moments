@@ -13,6 +13,7 @@ import type {
 import { FONT_STACK, HISTORY_LIMIT, PAGE_HEIGHT, PAGE_WIDTH, TEXT_PRESETS } from '@/lib/designTokens'
 import { defaultPhotoSize } from '@/lib/frame'
 import { newElementId, newPageId } from '@/lib/id'
+import { pageIndexAfterSheet, pagesForSheet } from '@/lib/bookLayout'
 import { STICKER_LIBRARY } from '@/lib/stickerLibrary'
 import { deepClone } from '@/lib/utils'
 
@@ -845,23 +846,39 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   addPage: (opts = {}) => {
     const album = get().album
     if (!album) return
+    const duplex = album.pageLayout === 'duplex'
+    const sheetId = duplex ? `sheet_${newPageId()}` : undefined
     const page = opts.template
       ? {
           ...deepClone(opts.template),
           id: newPageId(),
+          ...(sheetId ? { sheetId, sheetSide: 'front' as const } : {}),
           title: opts.title ?? opts.template.title,
           elements: cloneElements(opts.template.elements, 0),
         }
       : defaultPage(album, opts.role ?? 'content', opts.title, opts.background)
     if (opts.template && opts.role) page.role = opts.role
 
+    const backPage: Page | null = duplex && sheetId
+      ? {
+          ...deepClone(page),
+          id: newPageId(),
+          sheetId,
+          sheetSide: 'back',
+          title: `${page.title}（背面）`,
+          elements: [],
+        }
+      : null
+    if (duplex && sheetId) {
+      page.sheetId = sheetId
+      page.sheetSide = 'front'
+    }
+
     get().commit('新增页面', (draft) => {
-      if (opts.afterPageId) {
-        const index = draft.pages.findIndex((p) => p.id === opts.afterPageId)
-        draft.pages.splice(index === -1 ? draft.pages.length : index + 1, 0, page)
-      } else {
-        draft.pages.push(page)
-      }
+      const insertAt = opts.afterPageId
+        ? pageIndexAfterSheet(draft.pages, opts.afterPageId)
+        : draft.pages.length
+      draft.pages.splice(insertAt, 0, page, ...(backPage ? [backPage] : []))
     })
     set({ activePageId: page.id, selection: [] })
   },
@@ -871,26 +888,39 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!album) return
     const index = album.pages.findIndex((p) => p.id === pageId)
     if (index === -1) return
-    const source = album.pages[index]
-    const copy: Page = {
+    const sourcePages = album.pageLayout === 'duplex' ? pagesForSheet(album.pages, pageId) : [album.pages[index]]
+    const copySheetId = album.pageLayout === 'duplex' ? `sheet_${newPageId()}` : undefined
+    const copies = sourcePages.map((source) => ({
       ...deepClone(source),
       id: newPageId(),
+      ...(copySheetId ? { sheetId: copySheetId } : {}),
       title: `${source.title} 副本`,
       elements: cloneElements(source.elements, 0),
-    }
+    }))
     get().commit('复制页面', (draft) => {
-      draft.pages.splice(index + 1, 0, copy)
+      const lastSource = sourcePages.at(-1)?.id
+      const lastIndex = lastSource ? draft.pages.findIndex((page) => page.id === lastSource) : index
+      draft.pages.splice(lastIndex + 1, 0, ...copies)
     })
-    set({ activePageId: copy.id, selection: [] })
+    set({ activePageId: copies.find((page) => page.sheetSide === 'front')?.id ?? copies[0].id, selection: [] })
   },
 
   removePage: (pageId) => {
     const album = get().album
-    if (!album || album.pages.length <= 1) return
+    if (!album) return
+    const sheetCount = album.pageLayout === 'duplex'
+      ? new Set(album.pages.map((page) => page.sheetId)).size
+      : album.pages.length
+    if (sheetCount <= 1) return
     const index = album.pages.findIndex((p) => p.id === pageId)
     if (index === -1) return
+    const removedIds = new Set(
+      album.pageLayout === 'duplex'
+        ? pagesForSheet(album.pages, pageId).map((page) => page.id)
+        : [pageId],
+    )
     get().commit('删除页面', (draft) => {
-      draft.pages.splice(index, 1)
+      draft.pages = draft.pages.filter((page) => !removedIds.has(page.id))
     })
     const next = get().album
     if (!next) return
@@ -906,6 +936,19 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         fromIndex >= draft.pages.length ||
         toIndex >= draft.pages.length
       ) {
+        return
+      }
+      if (draft.pageLayout === 'duplex') {
+        const pages = draft.pages
+        const movingSheet = pages[fromIndex].sheetId
+        const targetSheet = pages[toIndex].sheetId
+        if (!movingSheet || !targetSheet || movingSheet === targetSheet) return
+        const sheets = [...new Set(pages.map((page) => page.sheetId))]
+        const fromSheet = sheets.indexOf(movingSheet)
+        const toSheet = sheets.indexOf(targetSheet)
+        const [movedSheet] = sheets.splice(fromSheet, 1)
+        sheets.splice(toSheet, 0, movedSheet)
+        draft.pages = sheets.flatMap((sheetId) => pages.filter((page) => page.sheetId === sheetId))
         return
       }
       const [moved] = draft.pages.splice(fromIndex, 1)

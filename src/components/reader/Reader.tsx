@@ -4,6 +4,7 @@ import type { Album, Page, PhotoAsset } from '@/types/album'
 import { BookSpread, type FlipVisual } from '@/components/book/BookSpread'
 import { usePhotosReady } from '@/hooks/usePhotoUrl'
 import { usePhotoStore } from '@/store/photoStore'
+import { buildDuplexSpreads } from '@/lib/bookLayout'
 
 /**
  * 沉浸式翻阅。
@@ -33,6 +34,8 @@ export interface ReaderProps {
   /** 初始页索引 */
   initialIndex?: number
   onIndexChange?: (index: number) => void
+  /** Select a page after a structural edit; optionally animate forward to it. */
+  navigationRequest?: { token: number; pageId: string; turn?: boolean }
 }
 
 /** 完整翻页时长。真实纸板翻动需要让人看清「抬起 → 立起 → 越过 → 落下」 */
@@ -89,8 +92,8 @@ function usePrefersReducedMotion(): boolean {
   return reduced
 }
 
-/** 把页面数组切成「跨页」：奇数页时封面单独一屏 */
-function buildSpreads(pages: Page[]): Array<[number | null, number | null]> {
+/** 把旧版单面页面数组切成「跨页」：奇数页时首张页面单独一屏 */
+function buildLegacySpreads(pages: Page[]): Array<[number | null, number | null]> {
   if (!pages.length) return [[null, null]]
   const spreads: Array<[number | null, number | null]> = []
   let cursor = 0
@@ -342,8 +345,11 @@ function useFlipDriver(options: {
  * Reader
  * ------------------------------------------------------------------ */
 
-export function Reader({ album, initialIndex = 0, onIndexChange }: ReaderProps) {
-  const spreads = useMemo(() => buildSpreads(album.pages), [album.pages])
+export function Reader({ album, initialIndex = 0, onIndexChange, navigationRequest }: ReaderProps) {
+  const spreads = useMemo(
+    () => album.pageLayout === 'duplex' ? buildDuplexSpreads(album.pages) : buildLegacySpreads(album.pages),
+    [album.pageLayout, album.pages],
+  )
   const reducedMotion = usePrefersReducedMotion()
 
   /** 定位初始跨页：包含 initialIndex 的那一屏 */
@@ -370,9 +376,29 @@ export function Reader({ album, initialIndex = 0, onIndexChange }: ReaderProps) 
     },
   })
 
+  const previousNavigationToken = useRef(navigationRequest?.token)
+  useEffect(() => {
+    if (!navigationRequest || previousNavigationToken.current === navigationRequest.token) return
+    previousNavigationToken.current = navigationRequest.token
+    const pageIndex = album.pages.findIndex((page) => page.id === navigationRequest.pageId)
+    if (pageIndex === -1) return
+    const targetSpread = spreads.findIndex(([left, right]) => left === pageIndex || right === pageIndex)
+    if (targetSpread === -1) return
+    if (navigationRequest.turn && targetSpread === spreadIndex + 1) animate('next')
+    else {
+      setSpreadIndex(targetSpread)
+      const target = spreads[targetSpread]
+      onIndexChange?.(target[1] ?? target[0] ?? pageIndex)
+    }
+  }, [album.pages, animate, navigationRequest, onIndexChange, spreadIndex, spreads])
+
   const total = spreads.length
   const spread = spreads[spreadIndex] ?? [null, null]
   const currentPageNumber = (spread[1] ?? spread[0] ?? 0) + 1
+  const displayedPageNumber = spread[0] !== null && spread[1] !== null
+    ? `${spread[0] + 1}–${spread[1] + 1}`
+    : String(currentPageNumber)
+  const pageNumberTotal = album.pages.length
   const flipping = flip !== null
 
   /**
@@ -736,7 +762,7 @@ export function Reader({ album, initialIndex = 0, onIndexChange }: ReaderProps) 
       >
         <div className="flex items-center gap-3">
           <span className="text-[11px] tabular-nums text-ink-400">
-            {currentPageNumber} / {album.pages.length}
+            {displayedPageNumber} / {pageNumberTotal}
           </span>
           <div className="flex h-1.5 items-center gap-1">
             {spreads.map((_, index) => (

@@ -322,6 +322,10 @@ export interface PageBackground {
 
 export interface Page {
   id: ID
+  /** 物理纸张标识；同一张纸的正反面共享此 ID。 */
+  sheetId?: ID
+  /** 该页面属于纸张正面还是背面。未设置时使用旧版单页排版。 */
+  sheetSide?: 'front' | 'back'
   /** 页面标题，用于底部缩略图与「旅行路线」目录 */
   title: string
   role: PageRole
@@ -345,6 +349,8 @@ export interface Album {
   title: string
   subtitle?: string
   theme: AlbumTheme
+  /** 新建实体书采用正反面顺序；未设置的旧册子沿用原跨页规则。 */
+  pageLayout?: 'duplex'
   /** 封面照片 */
   coverPhotoId?: ID
   startDate?: string

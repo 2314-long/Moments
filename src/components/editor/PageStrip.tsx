@@ -31,6 +31,9 @@ export function PageStrip() {
   }, [activePageId])
 
   if (!album) return null
+  const sheetCount = album.pageLayout === 'duplex'
+    ? new Set(album.pages.map((page) => page.sheetId)).size
+    : album.pages.length
 
   return (
     <div className="relative z-20 shrink-0 border-t border-white/[0.06] bg-ink-900/80 backdrop-blur-xl">
@@ -103,7 +106,7 @@ export function PageStrip() {
                   >
                     <Copy className="h-2.5 w-2.5" />
                   </button>
-                  {album.pages.length > 1 && (
+                  {sheetCount > 1 && (
                     <button
                       className="flex h-5 w-5 items-center justify-center rounded bg-ink-800/95 text-ink-300 shadow hover:bg-clay-600 hover:text-white"
                       title="删除页面"

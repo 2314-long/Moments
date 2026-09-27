@@ -147,6 +147,26 @@ export function EditorPage() {
     const index = pages.findIndex((p) => p.id === activePageId)
     if (index === -1) return [pages[0] ?? null, pages[1] ?? null]
 
+    if (album.pageLayout === 'duplex') {
+      const current = pages[index]
+      const sheets = [...new Map(pages.map((page) => [page.sheetId, page.sheetId])).keys()]
+      const sheetIndex = sheets.indexOf(current.sheetId)
+      const sheetPages = pages.filter((page) => page.sheetId === current.sheetId)
+      const front = sheetPages.find((page) => page.sheetSide === 'front') ?? null
+      const back = sheetPages.find((page) => page.sheetSide === 'back') ?? null
+
+      if (current.sheetSide === 'back') {
+        const nextSheetId = sheets[sheetIndex + 1]
+        const nextFront = pages.find((page) => page.sheetId === nextSheetId && page.sheetSide === 'front') ?? null
+        return [back ?? current, nextFront]
+      }
+
+      const previousSheetId = sheets[sheetIndex - 1]
+      const previousBack = pages.find((page) => page.sheetId === previousSheetId && page.sheetSide === 'back') ?? null
+      if (sheetIndex === 0) return [null, front ?? current]
+      return [previousBack, front ?? current]
+    }
+
     if (pages[index].role === 'cover') return [null, pages[index]]
 
     // 高亮页固定放在左页，右侧显示它的下一页
