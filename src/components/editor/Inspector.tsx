@@ -22,6 +22,7 @@ import type {
   PhotoStyle,
   ShapeElement,
   StampElement,
+  ArtTextElement,
   TextElement,
   TextPreset,
 } from '@/types/album'
@@ -275,6 +276,8 @@ function TypeSpecific({ element }: { element: AlbumElement }) {
       return <PhotoSettings element={element} patchData={patchData} />
     case 'text':
       return <TextSettings element={element} patchData={patchData} />
+    case 'art-text':
+      return <TextSettings element={element} patchData={patchData} />
     case 'note':
       return <NoteSettings element={element} patchData={patchData} />
     case 'sticker':
@@ -526,7 +529,7 @@ function TextSettings({
   element,
   patchData,
 }: {
-  element: TextElement
+  element: TextElement | ArtTextElement
   patchData: PatchData
 }) {
   const updateSelected = usePatch()
@@ -576,6 +579,13 @@ function TextSettings({
           ))}
         </div>
       </Section>
+
+      {element.kind === 'text' && (
+        <button
+          onClick={() => updateSelected((current) => current.kind === 'text' ? ({ ...current, kind: 'art-text', data: { ...current.data, templateId: 'travel', accentColor: '#c78b4d' } } as AlbumElement) : current, '转换为艺术字')}
+          className="flex w-full items-center justify-center rounded-lg border border-clay-500/35 bg-clay-500/10 py-2 text-xs text-clay-300 transition-colors hover:bg-clay-500/20"
+        >转换为旅行艺术字</button>
+      )}
 
       <Section title="字体">
         <div className="space-y-2">
@@ -1180,6 +1190,7 @@ function kindLabel(kind: ElementKind): string {
   const map: Record<ElementKind, string> = {
     photo: '照片',
     text: '文字',
+    'art-text': '艺术字',
     sticker: '贴纸',
     note: '便签',
     stamp: '印章',

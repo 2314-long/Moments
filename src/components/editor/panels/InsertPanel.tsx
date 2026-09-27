@@ -21,6 +21,7 @@ import { TEXT_PRESET_LIST } from '@/lib/designTokens'
 
 export function InsertPanel({ onSwitch }: { onSwitch: (panel: LeftPanel) => void }) {
   const addTextElement = useEditorStore((state) => state.addTextElement)
+  const addArtTextElement = useEditorStore((state) => state.addArtTextElement)
   const addNoteElement = useEditorStore((state) => state.addNoteElement)
   const addStampElement = useEditorStore((state) => state.addStampElement)
   const addDateElement = useEditorStore((state) => state.addDateElement)
@@ -33,6 +34,7 @@ export function InsertPanel({ onSwitch }: { onSwitch: (panel: LeftPanel) => void
         <div className="mb-2 text-[10px] tracking-wider text-ink-500">添加到当前页</div>
         <div className="grid grid-cols-2 gap-1.5">
           <ToolTile icon={<ImageIcon className="h-4 w-4" />} label="照片" onClick={() => onSwitch('photos')} />
+          <ToolTile icon={<Sparkles className="h-4 w-4" />} label="艺术字" onClick={() => addArtTextElement()} />
           <ToolTile icon={<Smile className="h-4 w-4" />} label="贴纸" onClick={() => onSwitch('stickers')} />
           <ToolTile
             icon={<StickyNote className="h-4 w-4" />}

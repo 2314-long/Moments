@@ -269,6 +269,12 @@ export const PAPERS: Record<PaperKind, PaperToken> = {
   line: { id: 'line', name: '横线', color: '#faf7f0', lineColor: 'rgba(120,140,160,0.22)', gap: 30 },
   kraft: { id: 'kraft', name: '牛皮', color: '#e6d3b3', lineColor: 'rgba(120,90,50,0.16)', gap: 26 },
   noise: { id: 'noise', name: '手账', color: '#f6f1e6', lineColor: 'rgba(120,130,140,0.12)', gap: 20 },
+  ivory: { id: 'ivory', name: '米白', color: '#f2ead9', lineColor: 'transparent', gap: 0 },
+  letter: { id: 'letter', name: '信纸', color: '#fffaf0', lineColor: 'rgba(104,143,184,0.22)', gap: 30 },
+  travel: { id: 'travel', name: '旅行记录', color: '#f4ecd9', lineColor: 'rgba(155,116,73,0.17)', gap: 28 },
+  film: { id: 'film', name: '胶片', color: '#252320', lineColor: 'rgba(243,224,180,0.16)', gap: 22 },
+  vintage: { id: 'vintage', name: '复古', color: '#e8d5ae', lineColor: 'rgba(116,76,41,0.16)', gap: 24 },
+  minimal: { id: 'minimal', name: '简约', color: '#f6f6f2', lineColor: 'rgba(55,55,55,0.08)', gap: 0 },
 }
 
 export const PAPER_LIST = Object.values(PAPERS)

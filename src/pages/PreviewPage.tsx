@@ -1,11 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Images, PencilLine, Share2 } from 'lucide-react'
+import { ArrowLeft, Images, ImagePlus, PencilLine, Plus, Share2, Sparkles, Type, X } from 'lucide-react'
 import { useLibraryStore } from '@/store/libraryStore'
 import { useEditorStore } from '@/store/editorStore'
 import { Reader } from '@/components/reader/Reader'
 import { PageThumb } from '@/components/editor/PageThumb'
 import { Toast, useToast } from '@/components/ui/Toast'
+import { PAPER_LIST } from '@/lib/designTokens'
+import { persistAlbum } from '@/persistence'
+import { uploadPhotos } from '@/services/uploadService'
 
 /**
  * 沉浸式预览。
@@ -27,6 +30,8 @@ export function PreviewPage() {
   const initialIndex = pageIndex ? Math.max(0, Number(pageIndex) || 0) : 0
   const [thumbsOpen, setThumbsOpen] = useState(false)
   const [current, setCurrent] = useState(initialIndex)
+  const [paperPickerOpen, setPaperPickerOpen] = useState(false)
+  const photoInput = useRef<HTMLInputElement>(null)
 
   // 离开阅读模式时清理编辑器草稿，避免下次进编辑器带着旧状态
   useEffect(() => () => closeAlbum(), [closeAlbum])
@@ -43,6 +48,20 @@ export function PreviewPage() {
   }
 
   const slug = album.share?.slug ?? album.id
+  const currentPage = album.pages[current] ?? album.pages[0]
+
+  /**
+   * 阅读器就是制作器：每次操作先把当前翻开的书载入编辑状态，再立即落盘。
+   * 不跳到传统画布页面，Reader 收到 library 的新数据后会原位重绘这张纸。
+   */
+  const withCurrentPage = async (change: (pageId: string) => void) => {
+    if (!currentPage) return
+    const editor = useEditorStore.getState()
+    editor.loadAlbum(album, currentPage.id)
+    change(currentPage.id)
+    const changed = useEditorStore.getState().album
+    if (changed) await persistAlbum(changed)
+  }
 
   return (
     <div
@@ -56,6 +75,35 @@ export function PreviewPage() {
         initialIndex={initialIndex}
         onIndexChange={setCurrent}
       />
+
+      {/* 打开书后的轻量 DIY 工具栏：不离开实体书阅读体验。 */}
+      <div className="absolute left-1/2 top-5 z-40 flex -translate-x-1/2 items-center gap-1 rounded-2xl border border-white/10 bg-ink-850/92 p-1.5 shadow-xl backdrop-blur-xl">
+        <button className="reader-diy-btn" onClick={() => setPaperPickerOpen(true)} title="在当前页后添加一张纸"><Plus className="h-3.5 w-3.5" />添加纸张</button>
+        <button className="reader-diy-btn" onClick={() => photoInput.current?.click()} title="上传照片并贴到当前页"><ImagePlus className="h-3.5 w-3.5" />照片</button>
+        <button className="reader-diy-btn" onClick={() => void withCurrentPage((pageId) => useEditorStore.getState().addTextElement('body', { pageId }))} title="在当前页添加文字"><Type className="h-3.5 w-3.5" />文字</button>
+        <button className="reader-diy-btn" onClick={() => void withCurrentPage((pageId) => useEditorStore.getState().addArtTextElement('travel', { pageId }))} title="在当前页添加艺术字"><Sparkles className="h-3.5 w-3.5" />艺术字</button>
+      </div>
+      <input ref={photoInput} type="file" accept="image/*" multiple className="hidden" onChange={(event) => {
+        const files = Array.from(event.target.files ?? [])
+        event.target.value = ''
+        if (!files.length) return
+        void (async () => {
+          try {
+            const result = await uploadPhotos(files)
+            await withCurrentPage((pageId) => result.assets.forEach((asset, index) => useEditorStore.getState().addPhotoElement(asset, { pageId, x: 150 + index * 20, y: 220 + index * 20 })))
+            if (result.failed.length) show(`${result.failed.length} 张照片未能添加`, { tone: 'error' })
+          } catch { show('照片上传失败，请重试', { tone: 'error' }) }
+        })()
+      }} />
+
+      {paperPickerOpen && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-ink-850 p-5 shadow-2xl">
+            <div className="mb-4 flex items-start justify-between"><div><h2 className="text-base text-ink-100">选择一张纸</h2><p className="mt-1 text-xs text-ink-500">它会接在当前翻开的页面之后。</p></div><button className="tool-btn h-7 w-7" onClick={() => setPaperPickerOpen(false)}><X className="h-3.5 w-3.5" /></button></div>
+            <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">{PAPER_LIST.map((paper) => <button key={paper.id} className="overflow-hidden rounded-xl border border-white/10 text-left transition hover:border-clay-500" onClick={() => { void withCurrentPage((pageId) => useEditorStore.getState().addPage({ afterPageId: pageId, title: paper.name + '新页', background: { color: paper.color, paper: paper.id, lineColor: paper.lineColor, vignette: 0.2 } })); setPaperPickerOpen(false) }}><span className="block h-16" style={{ backgroundColor: paper.color }} /><span className="block px-2 py-1.5 text-xs text-ink-300">{paper.name}</span></button>)}</div>
+          </div>
+        </div>
+      )}
 
       {/* 浮动操作栏 */}
       <div className="absolute left-5 top-5 z-40 flex items-center gap-1.5">

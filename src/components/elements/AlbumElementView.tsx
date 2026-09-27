@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import type { AlbumElement, DateElement, NoteElement, ShapeElement, StampElement, StickerElement, TextElement } from '@/types/album'
+import type { AlbumElement, ArtTextElement, DateElement, NoteElement, ShapeElement, StampElement, StickerElement, TextElement } from '@/types/album'
 import { StickerSvg } from '@/components/stickers/StickerSvg'
 import { PhotoView } from './PhotoView'
 import { MapView } from './MapView'
@@ -95,6 +95,19 @@ function TextView({ element }: { element: TextElement }) {
       {d.text}
     </div>
   )
+}
+
+function ArtTextView({ element }: { element: ArtTextElement }) {
+  const d = element.data
+  const effects: Record<ArtTextElement['data']['templateId'], CSSProperties> = {
+    handwritten: { borderBottom: `2px solid ${d.accentColor}`, textShadow: '1px 1px 0 rgba(255,255,255,.5)' },
+    travel: { borderTop: `2px solid ${d.accentColor}`, borderBottom: `2px solid ${d.accentColor}`, textShadow: '0 2px 0 rgba(255,255,255,.45)' },
+    cinema: { background: d.accentColor, padding: '10px 14px', letterSpacing: d.letterSpacing + 1 },
+    magazine: { borderLeft: `8px solid ${d.accentColor}`, paddingLeft: 12, textTransform: 'uppercase' },
+    seal: { border: `5px double ${d.accentColor}`, borderRadius: '50%', padding: 12, color: d.accentColor },
+    calligraphy: { textShadow: `2px 3px 0 color-mix(in srgb, ${d.accentColor} 35%, transparent)` },
+  }
+  return <div style={{ ...effects[d.templateId], width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: d.align === 'left' ? 'flex-start' : d.align === 'right' ? 'flex-end' : 'center', fontFamily: d.fontFamily, fontSize: d.fontSize, fontWeight: d.fontWeight, letterSpacing: d.letterSpacing, lineHeight: d.lineHeight, color: d.color, whiteSpace: 'pre-wrap', textAlign: d.align, overflow: 'hidden' }}>{d.text}</div>
 }
 
 /* ------------------------------------------------------------------ *
@@ -383,6 +396,9 @@ function AlbumElementViewImpl({ element, thumbnail = false, className, style }: 
       break
     case 'text':
       content = <TextView element={element} />
+      break
+    case 'art-text':
+      content = <ArtTextView element={element} />
       break
     case 'note':
       content = <NoteView element={element} />

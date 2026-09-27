@@ -19,6 +19,7 @@ export type ID = string
 export type ElementKind =
   | 'photo'
   | 'text'
+  | 'art-text'
   | 'sticker'
   | 'note'
   | 'stamp'
@@ -68,6 +69,12 @@ export type PaperKind =
   | 'line' // 横线
   | 'kraft' // 牛皮纸
   | 'noise' // 噪点手账纸
+  | 'ivory' // 米白纸
+  | 'letter' // 信纸
+  | 'travel' // 旅行记录纸
+  | 'film' // 胶片风格
+  | 'vintage' // 复古纸
+  | 'minimal' // 简约纸
 
 /* ------------------------------------------------------------------ *
  * 照片
@@ -179,6 +186,17 @@ export interface TextElement extends ElementBase {
   }
 }
 
+/** 艺术字仍然是文字，而不是一张不可再编辑的图片。 */
+export type ArtTextTemplate = 'handwritten' | 'travel' | 'cinema' | 'magazine' | 'seal' | 'calligraphy'
+
+export interface ArtTextElement extends ElementBase {
+  kind: 'art-text'
+  data: TextElement['data'] & {
+    templateId: ArtTextTemplate
+    accentColor: string
+  }
+}
+
 /** 贴纸 / 装饰元素 */
 export type StickerCategory =
   | 'tape'
@@ -276,6 +294,7 @@ export interface ShapeElement extends ElementBase {
 export type AlbumElement =
   | PhotoElement
   | TextElement
+  | ArtTextElement
   | StickerElement
   | NoteElement
   | StampElement

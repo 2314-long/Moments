@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { BookOpen, Copy, Plus, Trash2 } from 'lucide-react'
 import { useEditorStore } from '@/store/editorStore'
 import { PageThumb } from './PageThumb'
+import { PAPER_LIST } from '@/lib/designTokens'
 
 /**
  * 底部页面缩略图条。
@@ -18,6 +19,7 @@ export function PageStrip() {
   const duplicatePage = useEditorStore((state) => state.duplicatePage)
   const removePage = useEditorStore((state) => state.removePage)
   const movePage = useEditorStore((state) => state.movePage)
+  const [choosingPaper, setChoosingPaper] = useState(false)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef<HTMLButtonElement>(null)
@@ -120,12 +122,12 @@ export function PageStrip() {
 
           {/* 新增页面 */}
           <button
-            onClick={() => addPage({ afterPageId: activePageId })}
+            onClick={() => setChoosingPaper(true)}
             className="flex h-[68px] w-[54px] shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-ink-600 text-ink-500 transition-all hover:border-clay-500/60 hover:bg-ink-800/50 hover:text-ink-200"
-            title="在当前页之后新增一页"
+            title="添加一张纸"
           >
             <Plus className="h-4 w-4" />
-            <span className="text-[9px]">新增</span>
+            <span className="text-[9px]">添纸</span>
           </button>
         </div>
 
@@ -135,6 +137,12 @@ export function PageStrip() {
           可调整顺序
         </div>
       </div>
+      {choosingPaper && (
+        <div className="absolute bottom-full left-1/2 z-50 mb-2 w-[420px] max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-2xl border border-white/10 bg-ink-850 p-4 shadow-2xl">
+          <div className="mb-3 flex items-center justify-between"><div><div className="text-sm text-ink-100">选择一张纸</div><div className="mt-0.5 text-[10px] text-ink-500">这会接在当前页面之后，你之后也可以随时更换。</div></div><button className="text-xs text-ink-500 hover:text-ink-200" onClick={() => setChoosingPaper(false)}>取消</button></div>
+          <div className="grid grid-cols-4 gap-2">{PAPER_LIST.map((paper) => <button key={paper.id} onClick={() => { addPage({ afterPageId: activePageId, title: paper.name + '新页', background: { color: paper.color, paper: paper.id, lineColor: paper.lineColor, vignette: 0.2 } }); setChoosingPaper(false) }} className="overflow-hidden rounded-lg border border-white/10 text-left hover:border-clay-500"><span className="block h-11" style={{ backgroundColor: paper.color, backgroundImage: paper.id === 'grid' ? `linear-gradient(to right, ${paper.lineColor} 1px, transparent 1px), linear-gradient(to bottom, ${paper.lineColor} 1px, transparent 1px)` : undefined, backgroundSize: '10px 10px' }} /><span className="block px-1.5 py-1 text-[10px] text-ink-300">{paper.name}</span></button>)}</div>
+        </div>
+      )}
     </div>
   )
 }

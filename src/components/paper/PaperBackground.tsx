@@ -43,6 +43,7 @@ function textureStyle(background: PageBackground): CSSProperties {
         backgroundSize: `${gap}px ${gap}px`,
       }
     case 'line':
+    case 'letter':
       return {
         backgroundImage: `linear-gradient(to bottom, ${line} 1px, transparent 1px)`,
         backgroundSize: `100% ${gap}px`,
@@ -58,6 +59,20 @@ function textureStyle(background: PageBackground): CSSProperties {
         backgroundImage: `radial-gradient(circle at 20% 18%, rgba(120,130,140,0.05) 0, transparent 42%),
           radial-gradient(circle at 78% 72%, rgba(120,130,140,0.05) 0, transparent 38%)`,
       }
+    case 'travel':
+      return {
+        backgroundImage: `linear-gradient(90deg, transparent 44px, ${line} 44px 46px, transparent 46px), repeating-linear-gradient(to bottom, transparent 0 ${gap - 1}px, ${line} ${gap - 1}px ${gap}px)`,
+      }
+    case 'film':
+      return {
+        backgroundImage: `linear-gradient(90deg, rgba(244,222,176,.58) 0 12px, transparent 12px calc(100% - 12px), rgba(244,222,176,.58) calc(100% - 12px)), repeating-linear-gradient(to bottom, rgba(255,255,255,.08) 0 1px, transparent 1px ${gap}px)`,
+      }
+    case 'vintage':
+      return {
+        backgroundImage: 'radial-gradient(ellipse at 14% 18%, rgba(128,75,30,.15), transparent 35%), repeating-linear-gradient(20deg, rgba(100,60,20,.045) 0 1px, transparent 1px 7px)',
+      }
+    case 'ivory':
+    case 'minimal':
     case 'plain':
     default:
       return {}

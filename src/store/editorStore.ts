@@ -7,6 +7,7 @@ import type {
   PageRole,
   PhotoAsset,
   PhotoStyle,
+  ArtTextTemplate,
   TextPreset,
 } from '@/types/album'
 import { FONT_STACK, HISTORY_LIMIT, PAGE_HEIGHT, PAGE_WIDTH, TEXT_PRESETS } from '@/lib/designTokens'
@@ -93,6 +94,7 @@ export interface EditorState {
     opts?: { x?: number; y?: number; style?: PhotoStyle; pageId?: string },
   ) => void
   addTextElement: (preset: TextPreset, opts?: { x?: number; y?: number; pageId?: string }) => void
+  addArtTextElement: (templateId?: ArtTextTemplate, opts?: { x?: number; y?: number; pageId?: string }) => void
   addStickerElement: (
     stickerId: string,
     opts?: { x?: number; y?: number; pageId?: string },
@@ -129,7 +131,7 @@ export interface EditorState {
 
   /* ---- 页面 ---- */
   setActivePage: (pageId: string) => void
-  addPage: (opts?: { role?: PageRole; title?: string; afterPageId?: string; template?: Page }) => void
+  addPage: (opts?: { role?: PageRole; title?: string; afterPageId?: string; template?: Page; background?: Page['background'] }) => void
   duplicatePage: (pageId: string) => void
   removePage: (pageId: string) => void
   movePage: (fromIndex: number, toIndex: number) => void
@@ -213,12 +215,17 @@ function cloneElements(elements: AlbumElement[], offset = 16): AlbumElement[] {
   })
 }
 
-function defaultPage(album: Album, role: PageRole = 'content', title?: string): Page {
+function defaultPage(
+  album: Album,
+  role: PageRole = 'content',
+  title?: string,
+  background?: Page['background'],
+): Page {
   return {
     id: newPageId(),
     title: title ?? `第 ${album.pages.length} 页`,
     role,
-    background: {
+    background: background ?? {
       color: '#f7f3ea',
       paper: 'plain',
       vignette: 0.22,
@@ -521,6 +528,30 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     appendToPage(get, pageId, element, '添加文字')
   },
 
+  addArtTextElement: (templateId = 'travel', opts = {}) => {
+    const pageId = get().resolveTargetPage(opts.pageId)
+    if (!pageId) return
+    const byTemplate = {
+      handwritten: { text: '写下这一刻', font: FONT_STACK.hand, color: '#394a67', accent: '#a66c50', rotation: -2 },
+      travel: { text: '抵达山海之间', font: FONT_STACK.hand, color: '#31566a', accent: '#c78b4d', rotation: -1 },
+      cinema: { text: 'THE MOMENT', font: FONT_STACK.sans, color: '#f2e5c8', accent: '#9b3f3d', rotation: 0 },
+      magazine: { text: 'WEEKEND NOTES', font: FONT_STACK.sans, color: '#252525', accent: '#e6b8a2', rotation: 0 },
+      seal: { text: '纪念', font: FONT_STACK.serif, color: '#9e3d32', accent: '#9e3d32', rotation: -4 },
+      calligraphy: { text: '山川入梦', font: FONT_STACK.hand, color: '#2b3025', accent: '#9b6d36', rotation: -3 },
+    }[templateId]
+    const element: AlbumElement = {
+      id: newElementId(), kind: 'art-text', x: opts.x ?? 110, y: opts.y ?? 300,
+      width: templateId === 'seal' ? 180 : 430, height: templateId === 'seal' ? 180 : 104,
+      rotation: byTemplate.rotation, opacity: 1, locked: false, shadow: 0.18,
+      data: {
+        text: byTemplate.text, preset: 'title', fontFamily: byTemplate.font, fontSize: templateId === 'seal' ? 58 : 42,
+        fontWeight: templateId === 'magazine' ? 800 : 700, italic: false, letterSpacing: templateId === 'cinema' ? 5 : 1.5,
+        lineHeight: 1.25, color: byTemplate.color, align: 'center', templateId, accentColor: byTemplate.accent,
+      },
+    }
+    appendToPage(get, pageId, element, '添加艺术字')
+  },
+
   addStickerElement: (stickerId, opts = {}) => {
     const pageId = get().resolveTargetPage(opts.pageId)
     if (!pageId) return
@@ -821,7 +852,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           title: opts.title ?? opts.template.title,
           elements: cloneElements(opts.template.elements, 0),
         }
-      : defaultPage(album, opts.role ?? 'content', opts.title)
+      : defaultPage(album, opts.role ?? 'content', opts.title, opts.background)
     if (opts.template && opts.role) page.role = opts.role
 
     get().commit('新增页面', (draft) => {

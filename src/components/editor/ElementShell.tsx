@@ -46,6 +46,7 @@ const HANDLE_POSITION: Record<ResizeHandle, { left: string; top: string; cursor:
 function editableTextOf(element: AlbumElement): string | null {
   switch (element.kind) {
     case 'text':
+    case 'art-text':
       return element.data.text
     case 'note':
       return element.data.text

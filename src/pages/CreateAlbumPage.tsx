@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
   ArrowRight,
@@ -58,7 +58,7 @@ const ANALYSIS_STEPS = [
   { key: 'write', label: '撰写标题与文字' },
 ] as const
 
-export function CreateAlbumPage() {
+export function LegacyCreateAlbumPage() {
   const libraryAssets = usePhotoStore((state) => state.assets)
   const { toast, show } = useToast()
 
@@ -647,6 +647,69 @@ export function CreateAlbumPage() {
       </footer>
 
       <Toast toast={toast} />
+    </div>
+  )
+}
+
+/**
+ * 产品默认创建路径：先选一本书的封面，立刻进入一本空白的实体书。
+ * 原来的照片分析向导仍保留在文件里，便于后续作为「AI 自动排版」可选能力，
+ * 但不再阻塞第一次创建。
+ */
+export function CreateAlbumPage() {
+  const navigate = useNavigate()
+  const [theme, setTheme] = useState<AlbumTheme>('travel')
+  const [creating, setCreating] = useState(false)
+
+  const createBlankBook = async () => {
+    setCreating(true)
+    const now = new Date().toISOString()
+    const token = THEMES[theme]
+    const album: Album = {
+      id: newAlbumId(),
+      title: '未命名纪念册',
+      theme,
+      pages: [{
+        id: `pg_first_${Date.now()}`,
+        title: '开始记录',
+        role: 'content',
+        background: { color: token.paper === 'kraft' ? '#e6d3b3' : '#f7f3ea', paper: token.paper, vignette: 0.2 },
+        elements: [],
+      }],
+      photoIds: [],
+      pageSize: { width: PAGE_WIDTH, height: PAGE_HEIGHT },
+      author: { name: '我' },
+      share: { enabled: true, slug: `album-${Date.now()}`, updatedAt: now },
+      createdAt: now,
+      updatedAt: now,
+    }
+    try {
+      await persistAlbum(album)
+      navigate(`/album/${album.id}/read`)
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  return (
+    <div className="flex h-full flex-col overflow-y-auto">
+      <header className="flex items-center gap-3 px-7 py-5">
+        <Link to="/" className="tool-btn h-9 w-9" title="返回书架"><ArrowLeft className="h-4 w-4" /></Link>
+        <div><h1 className="font-serif text-lg text-ink-100">创建一本新纪念册</h1><p className="mt-0.5 text-xs text-ink-500">先挑一张封面，内容以后慢慢写。</p></div>
+      </header>
+      <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-7 pb-10 pt-4">
+        <div className="mb-5 flex items-center justify-between"><div><h2 className="text-sm text-ink-200">选择你的封面</h2><p className="mt-1 text-xs text-ink-500">封面随时可以在书架中更换；标题、照片和每一张内页都不是现在必填。</p></div><button className="btn-primary" onClick={() => void createBlankBook()} disabled={creating}>{creating ? '正在创建…' : '开始制作'}</button></div>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+          {THEME_LIST.map((item) => {
+            const selected = item.id === theme
+            return <button key={item.id} onClick={() => setTheme(item.id)} className={`group rounded-xl p-2 text-left transition-all ${selected ? 'bg-ink-700 ring-2 ring-clay-500' : 'bg-ink-850/60 hover:bg-ink-800 ring-1 ring-white/10'}`}>
+              <MiniCover theme={item.id} title="我的纪念册" />
+              <span className="mt-2 block text-xs text-ink-200">{item.name}</span><span className="mt-0.5 block text-[10px] text-ink-500">{item.mood}</span>
+            </button>
+          })}
+        </div>
+        <div className="mt-auto pt-10 text-center text-xs text-ink-600">创建后会直接打开第一张厚纸；从书尾的「添加纸张」继续扩展它。</div>
+      </main>
     </div>
   )
 }

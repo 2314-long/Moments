@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer components {
+  .reader-diy-btn { @apply inline-flex items-center gap-1.5 rounded-xl px-2.5 py-2 text-[11px] text-ink-300 transition-colors hover:bg-ink-700 hover:text-ink-100; }
+}
+
 /* ================================================================== *
  * 时光册 · 全局样式
  *

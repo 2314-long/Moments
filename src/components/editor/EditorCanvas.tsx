@@ -825,6 +825,8 @@ function withText(element: AlbumElement, text: string): AlbumElement {
   switch (element.kind) {
     case 'text':
       return { ...element, data: { ...element.data, text } }
+    case 'art-text':
+      return { ...element, data: { ...element.data, text } }
     case 'note':
       return { ...element, data: { ...element.data, text } }
     case 'stamp':
@@ -904,4 +906,3 @@ function resolveCrossPageTarget(
 
   return null
 }
-
