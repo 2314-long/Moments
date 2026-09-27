@@ -101,7 +101,7 @@ function ArtTextView({ element }: { element: ArtTextElement }) {
   const d = element.data
   const effects: Record<ArtTextElement['data']['templateId'], CSSProperties> = {
     handwritten: { borderBottom: `2px solid ${d.accentColor}`, textShadow: '1px 1px 0 rgba(255,255,255,.5)' },
-    travel: { borderTop: `2px solid ${d.accentColor}`, borderBottom: `2px solid ${d.accentColor}`, textShadow: '0 2px 0 rgba(255,255,255,.45)' },
+    travel: { textShadow: '0 2px 0 rgba(255,255,255,.45)' },
     cinema: { background: d.accentColor, padding: '10px 14px', letterSpacing: d.letterSpacing + 1 },
     magazine: { borderLeft: `8px solid ${d.accentColor}`, paddingLeft: 12, textTransform: 'uppercase' },
     seal: { border: `5px double ${d.accentColor}`, borderRadius: '50%', padding: 12, color: d.accentColor },
