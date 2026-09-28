@@ -45,8 +45,6 @@ export interface ReaderProps {
   onPickPage?: (pageId: string) => void
   /** 当前跨页左右两页的 id（翻页落定后回调），供外层决定新内容放哪一页 */
   onSpreadChange?: (pageIds: [string | null, string | null]) => void
-  /** 当前选定的目标页：在书上轻轻标出来 */
-  targetPageId?: string | null
 }
 
 /** 焦点在输入框里（或弹窗里）时，阅读器不应抢键盘：否则空格会翻页而不是打字 */
@@ -378,7 +376,6 @@ export function Reader({
   onDeleteElement,
   onPickPage,
   onSpreadChange,
-  targetPageId,
 }: ReaderProps) {
   const rootRef = useRef<HTMLDivElement>(null)
   const spreads = useMemo(
@@ -799,7 +796,6 @@ export function Reader({
         onMoveTextElement={onMoveTextElement}
         onEditTextElement={onEditTextElement}
         onDeleteElement={onDeleteElement}
-        targetPageId={flipping ? null : targetPageId ?? null}
       />
 
       {/* 左右翻页热区 */}
@@ -901,7 +897,6 @@ function BookViewport({
   onMoveTextElement,
   onEditTextElement,
   onDeleteElement,
-  targetPageId,
 }: {
   album: Album
   left: Page | null
@@ -912,7 +907,6 @@ function BookViewport({
   onMoveTextElement?: (elementId: string, x: number, y: number, pageId: string) => void
   onEditTextElement?: (elementId: string) => void
   onDeleteElement?: (elementId: string) => void
-  targetPageId: string | null
 }) {
   const { ref, scale: fitScale } = useFitScale(album.pageSize, 86)
   const scale = zoomed ? 1 : fitScale
@@ -968,7 +962,6 @@ function BookViewport({
               onMove={onMoveTextElement}
               onEdit={onEditTextElement}
               onDelete={onDeleteElement}
-              targetPageId={targetPageId}
             />
           )}
         </div>
@@ -1029,7 +1022,6 @@ function TextMoveOverlays({
   onMove,
   onEdit,
   onDelete,
-  targetPageId,
 }: {
   pages: [Page | null, Page | null]
   pageWidth: number
@@ -1039,7 +1031,6 @@ function TextMoveOverlays({
   onMove: (elementId: string, x: number, y: number, pageId: string) => void
   onEdit?: (elementId: string) => void
   onDelete?: (elementId: string) => void
-  targetPageId: string | null
 }) {
   type DragState = {
     id: string
@@ -1278,14 +1269,6 @@ function TextMoveOverlays({
               </div>
             )
           })}
-
-          {/* 「新内容会加到这一页」的标记：很淡的内描边，不抢画面 */}
-          {page && targetPageId === page.id && !drag?.moved && (
-            <div
-              className="pointer-events-none absolute inset-0"
-              style={{ boxShadow: `inset 0 0 0 ${2 * inverse}px rgba(194,96,63,0.45)` }}
-            />
-          )}
 
           {/* 跨页拖动的落点预览：画在目标页上 */}
           {crossing && crossing.toIndex === pageNumber && (

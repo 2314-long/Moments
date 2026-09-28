@@ -277,7 +277,6 @@ export function PreviewPage() {
         }}
         onPickPage={setPickedPageId}
         onSpreadChange={handleSpreadChange}
-        targetPageId={spreadPageIds[0] && spreadPageIds[1] ? targetPageId : null}
         onEditTextElement={editTextById}
         onDeleteElement={deleteElementById}
       />
