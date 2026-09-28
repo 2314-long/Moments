@@ -102,7 +102,15 @@ function ElementShellImpl({
         opacity: element.opacity,
         cursor: locked ? 'not-allowed' : 'move',
       }}
-      onPointerDown={(event) => onPointerDown(event, element.id)}
+      onPointerDown={(event) => {
+        // 原位编辑时，点在输入框里是在挪光标 / 选字，不能被当成拖拽：
+        // 画布的拖拽逻辑会 preventDefault，光标就放不进去、字也选不中
+        if (editing) {
+          event.stopPropagation()
+          return
+        }
+        onPointerDown(event, element.id)
+      }}
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => setHovered(false)}
       onDoubleClick={(event) => {
@@ -275,6 +283,8 @@ function EditableOverlay({
   // 便签额外还要显示底色，避免编辑时看到透明区域
   const isNote = element.kind === 'note'
   const isStamp = element.kind === 'stamp'
+  // 艺术字与普通文字共用一套排版字段，编辑时也要保持同样的字体 / 字号
+  const textData = element.kind === 'text' || element.kind === 'art-text' ? element.data : null
 
   const style = {
     width: '100%',
@@ -284,25 +294,25 @@ function EditableOverlay({
     outline: 'none',
     background: isNote ? element.data.background : 'transparent',
     padding: isNote ? 12 : 0,
-    color: isStamp ? element.data.color : element.kind === 'text' ? element.data.color : '#4a4436',
+    color: isStamp ? element.data.color : textData ? textData.color : '#4a4436',
     fontFamily: isStamp
       ? 'inherit'
-      : element.kind === 'text' || element.kind === 'note'
-        ? element.data.fontFamily
-        : 'inherit',
-    fontSize:
-      element.kind === 'text'
-        ? element.data.fontSize
+      : textData
+        ? textData.fontFamily
         : element.kind === 'note'
-          ? element.data.fontSize
-          : isStamp
-            ? Math.min(element.width, element.height) * 0.22
-            : 14,
-    lineHeight: element.kind === 'text' ? element.data.lineHeight : 1.6,
-    letterSpacing: element.kind === 'text' ? element.data.letterSpacing : undefined,
-    fontWeight: element.kind === 'text' ? element.data.fontWeight : undefined,
-    textAlign:
-      element.kind === 'text' ? element.data.align : isStamp ? ('center' as const) : ('left' as const),
+          ? element.data.fontFamily
+          : 'inherit',
+    fontSize: textData
+      ? textData.fontSize
+      : element.kind === 'note'
+        ? element.data.fontSize
+        : isStamp
+          ? Math.min(element.width, element.height) * 0.22
+          : 14,
+    lineHeight: textData ? textData.lineHeight : 1.6,
+    letterSpacing: textData ? textData.letterSpacing : undefined,
+    fontWeight: textData ? textData.fontWeight : undefined,
+    textAlign: textData ? textData.align : isStamp ? ('center' as const) : ('left' as const),
     caretColor: '#c2603f',
   }
 

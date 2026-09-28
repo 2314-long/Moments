@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { Album } from '@/types/album'
 import { BookCover } from '@/components/album/BookCover'
+import { BOOK_GAP } from '@/components/book/BookSpread'
 
 type OpeningPhase = 'focus' | 'center' | 'opening' | 'pages' | 'handoff'
 
@@ -60,7 +61,7 @@ function OpeningOverlay({ request, phase }: { request: OpeningRequest; phase: Op
   // 与 Reader.useFitScale 完全一致：BookSpread 使用原始页面坐标，
   // 只在外层缩放。不能把缩放后的尺寸传进 BookSpread，否则元素仍按
   // 720×900 页面坐标绘制，会造成图片/文字与页面几何错位。
-  const baseSpreadWidth = album.pageSize.width * 2 + 14
+  const baseSpreadWidth = album.pageSize.width * 2 + BOOK_GAP
   const fitScale = Math.max(
     0.15,
     Math.min(

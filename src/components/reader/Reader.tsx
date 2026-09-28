@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight, Maximize2, Minimize2 } from 'lucide-react'
 import type { Album, Page, PhotoAsset } from '@/types/album'
-import { BookSpread, type FlipVisual } from '@/components/book/BookSpread'
+import { BOOK_GAP, BookSpread, type FlipVisual } from '@/components/book/BookSpread'
 import { usePhotosReady } from '@/hooks/usePhotoUrl'
 import { usePhotoStore } from '@/store/photoStore'
 import { buildDuplexSpreads } from '@/lib/bookLayout'
@@ -36,7 +36,29 @@ export interface ReaderProps {
   onIndexChange?: (index: number) => void
   /** Select a page after a structural edit; optionally animate forward to it. */
   navigationRequest?: { token: number; pageId: string; turn?: boolean }
-  onMoveTextElement?: (elementId: string, x: number, y: number) => void
+  onMoveTextElement?: (elementId: string, x: number, y: number, pageId: string) => void
+  /** 双击 / 点「编辑」时打开文字编辑 */
+  onEditTextElement?: (elementId: string) => void
+  /** 点「删除」或按 Delete / Backspace 时删除文字 */
+  onDeleteElement?: (elementId: string) => void
+  /** 点击某一页，把它设为「新内容落到哪一页」的目标 */
+  onPickPage?: (pageId: string) => void
+  /** 当前跨页左右两页的 id（翻页落定后回调），供外层决定新内容放哪一页 */
+  onSpreadChange?: (pageIds: [string | null, string | null]) => void
+  /** 当前选定的目标页：在书上轻轻标出来 */
+  targetPageId?: string | null
+}
+
+/** 焦点在输入框里（或弹窗里）时，阅读器不应抢键盘：否则空格会翻页而不是打字 */
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  return (
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.tagName === 'SELECT' ||
+    target.isContentEditable ||
+    Boolean(target.closest('[role="dialog"]'))
+  )
 }
 
 /** 完整翻页时长。真实纸板翻动需要让人看清「抬起 → 立起 → 越过 → 落下」 */
@@ -346,7 +368,19 @@ function useFlipDriver(options: {
  * Reader
  * ------------------------------------------------------------------ */
 
-export function Reader({ album, initialIndex = 0, onIndexChange, navigationRequest, onMoveTextElement }: ReaderProps) {
+export function Reader({
+  album,
+  initialIndex = 0,
+  onIndexChange,
+  navigationRequest,
+  onMoveTextElement,
+  onEditTextElement,
+  onDeleteElement,
+  onPickPage,
+  onSpreadChange,
+  targetPageId,
+}: ReaderProps) {
+  const rootRef = useRef<HTMLDivElement>(null)
   const spreads = useMemo(
     () => album.pageLayout === 'duplex' ? buildDuplexSpreads(album.pages) : buildLegacySpreads(album.pages),
     [album.pageLayout, album.pages],
@@ -395,6 +429,29 @@ export function Reader({ album, initialIndex = 0, onIndexChange, navigationReque
 
   const total = spreads.length
   const spread = spreads[spreadIndex] ?? [null, null]
+  const spreadLeftId = spread[0] === null ? null : album.pages[spread[0]]?.id ?? null
+  const spreadRightId = spread[1] === null ? null : album.pages[spread[1]]?.id ?? null
+  useEffect(() => {
+    onSpreadChange?.([spreadLeftId, spreadRightId])
+  }, [onSpreadChange, spreadLeftId, spreadRightId])
+
+  /** 点选目标页：按点击位置判断落在左纸还是右纸 */
+  const pickPageAt = useCallback(
+    (clientX: number, clientY: number) => {
+      if (!onPickPage) return
+      // 用文字层里两张纸的真实屏幕矩形判断（不是把容器对半分：左右翻页热区、
+      // 封面板都不算「一页」）
+      const nodes = rootRef.current?.querySelectorAll<HTMLElement>('[data-reader-page]') ?? []
+      for (const node of Array.from(nodes)) {
+        const box = node.getBoundingClientRect()
+        if (clientX >= box.left && clientX <= box.right && clientY >= box.top && clientY <= box.bottom) {
+          if (node.dataset.readerPage) onPickPage(node.dataset.readerPage)
+          return
+        }
+      }
+    },
+    [onPickPage],
+  )
   const currentPageNumber = (spread[1] ?? spread[0] ?? 0) + 1
   const displayedPageNumber = spread[0] !== null && spread[1] !== null
     ? `${spread[0] + 1}–${spread[1] + 1}`
@@ -422,8 +479,8 @@ export function Reader({ album, initialIndex = 0, onIndexChange, navigationReque
   const photosReady = usePhotosReady(albumAssets)
 
   /** 整本书的宽度，用于把拖拽距离换算成翻页进度 */
-  const spreadWidthRef = useRef(album.pageSize.width * 2 + 14)
-  spreadWidthRef.current = album.pageSize.width * 2 + 14
+  const spreadWidthRef = useRef(album.pageSize.width * 2 + BOOK_GAP)
+  spreadWidthRef.current = album.pageSize.width * 2 + BOOK_GAP
 
   /* ---------------------------------------------------------- 键盘 / 手势 */
 
@@ -431,6 +488,7 @@ export function Reader({ album, initialIndex = 0, onIndexChange, navigationReque
     const onKeyDown = (event: KeyboardEvent) => {
       // 长按会连发 repeat，翻页是 900ms 的动画，重复触发没有意义
       if (event.repeat) return
+      if (isTypingTarget(event.target)) return
       if (event.key === 'ArrowRight' || event.key === ' ' || event.key === 'PageDown') {
         event.preventDefault()
         animate('next')
@@ -491,6 +549,10 @@ export function Reader({ album, initialIndex = 0, onIndexChange, navigationReque
       // 只响应主键：右键 / 中键不该翻页
       if (event.button !== 0) return
       if (event.target instanceof Element && event.target.closest('[data-text-move]')) return
+      // 只有在书本区域里按下才可能是翻页手势；阅读页上方的工具栏、弹窗、
+      // Toast 都不在 Reader 里，在输入框里拖选文字不应该带动纸叶
+      if (!(event.target instanceof Node) || !rootRef.current?.contains(event.target)) return
+      if (isTypingTarget(event.target)) return
       dragStart.current = { x: event.clientX, y: event.clientY, t: performance.now(), active: false }
     }
 
@@ -537,7 +599,12 @@ export function Reader({ album, initialIndex = 0, onIndexChange, navigationReque
       }
       const dx = event.clientX - start.x
       const dt = performance.now() - start.t
-      if (dt < 700 && Math.abs(dx) > 60) animate(dx < 0 ? 'next' : 'prev')
+      if (dt < 700 && Math.abs(dx) > 60) {
+        animate(dx < 0 ? 'next' : 'prev')
+        return
+      }
+      // 纯粹的点击（没拖动、没划翻）：把这一页设为新内容的目标页
+      if (dt < 600 && Math.abs(dx) < 6) pickPageAt(event.clientX, event.clientY)
     }
 
     window.addEventListener('pointerdown', onPointerDown)
@@ -550,7 +617,7 @@ export function Reader({ album, initialIndex = 0, onIndexChange, navigationReque
       window.removeEventListener('pointerup', onPointerUp)
       window.removeEventListener('pointercancel', onPointerUp)
     }
-  }, [animate, beginDrag, endDrag, reducedMotion, updateDrag])
+  }, [animate, beginDrag, endDrag, pickPageAt, reducedMotion, updateDrag])
 
   /* ---------------------------------------------------------- 拖拽定格（开发期） */
 
@@ -682,6 +749,7 @@ export function Reader({ album, initialIndex = 0, onIndexChange, navigationReque
 
   return (
     <div
+      ref={rootRef}
       className="relative flex h-full w-full flex-col items-center justify-center overflow-hidden"
       style={{ touchAction: 'pan-y', cursor: dragging ? 'grabbing' : 'default' }}
       onWheel={onWheel}
@@ -729,6 +797,9 @@ export function Reader({ album, initialIndex = 0, onIndexChange, navigationReque
         zoomed={zoomed}
         photosReady={photosReady}
         onMoveTextElement={onMoveTextElement}
+        onEditTextElement={onEditTextElement}
+        onDeleteElement={onDeleteElement}
+        targetPageId={flipping ? null : targetPageId ?? null}
       />
 
       {/* 左右翻页热区 */}
@@ -807,7 +878,7 @@ function useFitScale(size: { width: number; height: number }, padding: number) {
       const box = node.getBoundingClientRect()
       const availableW = box.width - padding * 2
       const availableH = box.height - padding * 2
-      const neededW = size.width * 2 + 14
+      const neededW = size.width * 2 + BOOK_GAP
       const neededH = size.height
       setScale(Math.max(0.15, Math.min(availableW / neededW, availableH / neededH, 1.3)))
     }
@@ -828,6 +899,9 @@ function BookViewport({
   zoomed,
   photosReady,
   onMoveTextElement,
+  onEditTextElement,
+  onDeleteElement,
+  targetPageId,
 }: {
   album: Album
   left: Page | null
@@ -835,12 +909,15 @@ function BookViewport({
   flip: FlipVisual | null
   zoomed: boolean
   photosReady: boolean
-  onMoveTextElement?: (elementId: string, x: number, y: number) => void
+  onMoveTextElement?: (elementId: string, x: number, y: number, pageId: string) => void
+  onEditTextElement?: (elementId: string) => void
+  onDeleteElement?: (elementId: string) => void
+  targetPageId: string | null
 }) {
   const { ref, scale: fitScale } = useFitScale(album.pageSize, 86)
   const scale = zoomed ? 1 : fitScale
   const size = album.pageSize
-  const spreadWidth = size.width * 2 + 14
+  const spreadWidth = size.width * 2 + BOOK_GAP
 
   return (
     <div ref={ref} className="flex h-full w-full items-center justify-center">
@@ -887,7 +964,11 @@ function BookViewport({
               pageWidth={size.width}
               pageHeight={size.height}
               scale={scale}
+              interactive={!flip}
               onMove={onMoveTextElement}
+              onEdit={onEditTextElement}
+              onDelete={onDeleteElement}
+              targetPageId={targetPageId}
             />
           )}
         </div>
@@ -920,39 +1001,135 @@ function BookViewport({
   )
 }
 
+const clamp = (value: number, min: number, max: number): number => Math.min(Math.max(value, min), max)
+
+/**
+ * 阅读页上的文字交互层：单击选中、按住拖动（可跨页）、双击编辑、Delete 删除。
+ *
+ * 之前这一层只有「拖动」：没有选中态、没有编辑 / 删除入口，而底层的
+ * BookSpread 是纯渲染，于是文字一旦放上页面就只能挪、不能改也删不掉。
+ *
+ * ── 为什么「拖到另一边就不见了」──────────────────────────────
+ * 元素的坐标是**所在页的本地坐标**（0..720）。拖到另一页时 x 会变成
+ * 720 以上，而纸面是 `overflow: hidden`：松手后数据还留在原页，
+ * 只是位置在纸外，于是被裁掉，看不见也点不到了。
+ *
+ * 现在的做法：
+ *  - 拖动中按**指针落在哪张纸**来决定画在哪一页，并把元素夹在纸面之内；
+ *  - 松手时如果换了页，把元素真正搬到那一页（坐标已经是那一页的本地坐标）；
+ *  - 拖动过程中不改数据 —— 一改，页面数组变化会让正在拖的 DOM 被卸载重建，
+ *    拖动就断了。拖动中的预览由这一层自己画（一个跟手的虚线框）。
+ */
 function TextMoveOverlays({
   pages,
   pageWidth,
   pageHeight,
   scale,
+  interactive,
   onMove,
+  onEdit,
+  onDelete,
+  targetPageId,
 }: {
   pages: [Page | null, Page | null]
   pageWidth: number
   pageHeight: number
   scale: number
-  onMove: (elementId: string, x: number, y: number) => void
+  interactive: boolean
+  onMove: (elementId: string, x: number, y: number, pageId: string) => void
+  onEdit?: (elementId: string) => void
+  onDelete?: (elementId: string) => void
+  targetPageId: string | null
 }) {
-  const [drag, setDrag] = useState<{ id: string; x: number; y: number } | null>(null)
-  const dragRef = useRef<{ id: string; startX: number; startY: number; pageX: number; pageY: number; x: number; y: number } | null>(null)
+  type DragState = {
+    id: string
+    /** 起始页（0 = 左，1 = 右） */
+    fromIndex: number
+    /** 按下时指针相对元素左上角的**页面坐标**偏移，拖动全程不变 */
+    grabX: number
+    grabY: number
+    startX: number
+    startY: number
+    startClientX: number
+    startClientY: number
+    width: number
+    height: number
+    /** 当前画在哪一页 */
+    toIndex: number
+    /** 在 toIndex 那一页里的本地坐标 */
+    x: number
+    y: number
+    moved: boolean
+  }
+
+  const [drag, setDrag] = useState<DragState | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const dragRef = useRef<DragState | null>(null)
+  const layerRef = useRef<HTMLDivElement>(null)
+  /** 两张纸各自的容器节点：用真实的屏幕矩形判断指针落在哪一页 */
+  const pageNodes = useRef<Array<HTMLDivElement | null>>([null, null])
+
+  // 选中的文字若已被删除 / 翻页后不在当前跨页，自动取消选中
+  const visibleIds = pages.flatMap((page) => page?.elements.map((element) => element.id) ?? [])
+  const selectedVisible = selectedId !== null && visibleIds.includes(selectedId)
+  useEffect(() => {
+    if (selectedId && !selectedVisible) setSelectedId(null)
+  }, [selectedId, selectedVisible])
+  useEffect(() => {
+    if (!interactive) setSelectedId(null)
+  }, [interactive])
 
   useEffect(() => {
+    /** 指针落在哪张纸上；两张都没命中（书外 / 封面板）时返回 null */
+    const hitPage = (clientX: number, clientY: number): { index: number; box: DOMRect } | null => {
+      for (let index = 0; index < 2; index += 1) {
+        const node = pageNodes.current[index]
+        if (!node || !pages[index]) continue
+        const box = node.getBoundingClientRect()
+        if (clientX >= box.left && clientX <= box.right && clientY >= box.top && clientY <= box.bottom) {
+          return { index, box }
+        }
+      }
+      return null
+    }
+
     const onPointerMove = (event: PointerEvent) => {
       const active = dragRef.current
       if (!active) return
-      const x = active.pageX + (event.clientX - active.startX) / scale
-      const y = active.pageY + (event.clientY - active.startY) / scale
-      active.x = x
-      active.y = y
-      setDrag({ id: active.id, x, y })
+      // 小于 3 屏幕 px 视为点击，不产生移动（否则每次单击 / 双击都会写一次存档）
+      if (!active.moved && Math.hypot(event.clientX - active.startClientX, event.clientY - active.startClientY) < 3) return
+
+      // 指针在书外时，继续按上一次所在的那一页换算（元素会贴在纸边上）
+      const hit = hitPage(event.clientX, event.clientY)
+      const index = hit?.index ?? active.toIndex
+      const box = hit?.box ?? pageNodes.current[index]?.getBoundingClientRect()
+      if (!box) return
+      const localX = (event.clientX - box.left) / scale - active.grabX
+      const localY = (event.clientY - box.top) / scale - active.grabY
+      const next: DragState = {
+        ...active,
+        moved: true,
+        toIndex: index,
+        // 夹在纸面之内：纸面 overflow:hidden，出界的部分会被裁掉
+        x: clamp(localX, 0, Math.max(0, pageWidth - active.width)),
+        y: clamp(localY, 0, Math.max(0, pageHeight - active.height)),
+      }
+      dragRef.current = next
+      setDrag(next)
     }
+
     const onPointerUp = () => {
       const active = dragRef.current
       dragRef.current = null
       if (!active) return
-      if (active.x !== active.pageX || active.y !== active.pageY) onMove(active.id, active.x, active.y)
       setDrag(null)
+      if (!active.moved) return
+      const target = pages[active.toIndex] ?? pages[active.fromIndex]
+      if (!target) return
+      const samePlace = active.toIndex === active.fromIndex && active.x === active.startX && active.y === active.startY
+      if (!samePlace) onMove(active.id, active.x, active.y, target.id)
     }
+
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', onPointerUp)
     window.addEventListener('pointercancel', onPointerUp)
@@ -961,34 +1138,183 @@ function TextMoveOverlays({
       window.removeEventListener('pointerup', onPointerUp)
       window.removeEventListener('pointercancel', onPointerUp)
     }
-  }, [onMove, scale])
+  }, [onMove, pageHeight, pageWidth, pages, scale])
+
+  // 点在文字层之外 → 取消选中
+  useEffect(() => {
+    if (!selectedId) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest('[data-text-move]')) return
+      setSelectedId(null)
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    return () => window.removeEventListener('pointerdown', onPointerDown)
+  }, [selectedId])
+
+  // Delete / Backspace 删除，Enter 编辑，Esc 取消选中
+  useEffect(() => {
+    if (!selectedId) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isTypingTarget(event.target)) return
+      if ((event.key === 'Delete' || event.key === 'Backspace') && onDelete) {
+        event.preventDefault()
+        onDelete(selectedId)
+        setSelectedId(null)
+      } else if (event.key === 'Enter' && onEdit) {
+        event.preventDefault()
+        onEdit(selectedId)
+      } else if (event.key === 'Escape') {
+        setSelectedId(null)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [onDelete, onEdit, selectedId])
+
+  if (!interactive) return null
+
+  const inverse = 1 / Math.max(0.05, scale)
+  const crossing = drag && drag.moved && drag.toIndex !== drag.fromIndex ? drag : null
 
   return (
-    <div className="pointer-events-none absolute inset-0" style={{ zIndex: 60 }}>
-      {pages.map((page, pageNumber) => page ? (
-        <div key={page.id} className="absolute top-0" style={{ left: pageNumber === 0 ? 0 : pageWidth + 14, width: pageWidth, height: pageHeight }}>
-          {page.elements.filter((element) => element.kind === 'text' || element.kind === 'art-text').map((element) => {
-            const x = drag?.id === element.id ? drag.x : element.x
-            const y = drag?.id === element.id ? drag.y : element.y
+    <div ref={layerRef} className="pointer-events-none absolute inset-0" style={{ zIndex: 60 }}>
+      {pages.map((page, pageNumber) => (
+        <div
+          key={page?.id ?? `empty-${pageNumber}`}
+          ref={(node) => {
+            pageNodes.current[pageNumber] = node
+          }}
+          data-reader-page={page?.id}
+          className="absolute top-0"
+          style={{ left: pageNumber === 0 ? 0 : pageWidth + BOOK_GAP, width: pageWidth, height: pageHeight }}
+        >
+          {page?.elements.filter((element) => element.kind === 'text' || element.kind === 'art-text').map((element) => {
+            const dragging = drag?.id === element.id && drag.moved
+            // 被拖到另一页时，原位只留一个淡淡的影子，真正的预览画在目标页上
+            const leftBehind = dragging && crossing !== null
+            const x = dragging && !leftBehind ? drag.x : element.x
+            const y = dragging && !leftBehind ? drag.y : element.y
+            const selected = selectedId === element.id
             return (
-              <div
-                key={element.id}
-                className="pointer-events-auto group absolute cursor-move rounded-sm border border-transparent hover:border-clay-500/80 hover:bg-clay-500/5 active:border-clay-400"
-                data-text-move=""
-                title="按住拖动文字"
-                style={{ left: x, top: y, width: element.width, height: element.height, transform: `rotate(${element.rotation}deg)`, touchAction: 'none' }}
-                onPointerDown={(event) => {
-                  if (event.button !== 0) return
-                  event.preventDefault()
-                  event.stopPropagation()
-                  dragRef.current = { id: element.id, startX: event.clientX, startY: event.clientY, pageX: element.x, pageY: element.y, x: element.x, y: element.y }
-                  setDrag({ id: element.id, x: element.x, y: element.y })
-                }}
-              />
+              <div key={element.id}>
+                <div
+                  className={`pointer-events-auto group absolute cursor-move rounded-sm border ${
+                    leftBehind
+                      ? 'border-dashed border-clay-500/40'
+                      : selected
+                        ? 'border-clay-400 bg-clay-500/5'
+                        : 'border-transparent hover:border-clay-500/80 hover:bg-clay-500/5'
+                  }`}
+                  data-text-move=""
+                  title="单击选中 · 拖动移动（可拖到另一页） · 双击编辑 · Delete 删除"
+                  style={{ left: x, top: y, width: element.width, height: element.height, transform: `rotate(${element.rotation}deg)`, touchAction: 'none', borderWidth: 1.5 * inverse }}
+                  onPointerDown={(event) => {
+                    if (event.button !== 0) return
+                    event.preventDefault()
+                    event.stopPropagation()
+                    setSelectedId(element.id)
+                    const box = pageNodes.current[pageNumber]?.getBoundingClientRect()
+                    const pointerX = box ? (event.clientX - box.left) / scale : element.x
+                    const pointerY = box ? (event.clientY - box.top) / scale : element.y
+                    const state: DragState = {
+                      id: element.id,
+                      fromIndex: pageNumber,
+                      toIndex: pageNumber,
+                      grabX: pointerX - element.x,
+                      grabY: pointerY - element.y,
+                      startX: element.x,
+                      startY: element.y,
+                      startClientX: event.clientX,
+                      startClientY: event.clientY,
+                      width: element.width,
+                      height: element.height,
+                      x: element.x,
+                      y: element.y,
+                      moved: false,
+                    }
+                    dragRef.current = state
+                    setDrag(state)
+                  }}
+                  onDoubleClick={(event) => {
+                    event.stopPropagation()
+                    onEdit?.(element.id)
+                  }}
+                />
+
+                {/* 选中后的小工具条：固定屏幕尺寸，不随文字旋转 */}
+                {selected && !dragging && (onEdit || onDelete) && (
+                  <div
+                    className="pointer-events-auto absolute flex items-center gap-1 whitespace-nowrap rounded-full border border-white/10 bg-ink-850/95 p-1 shadow-xl"
+                    data-text-move=""
+                    style={{
+                      left: x + element.width / 2,
+                      top: y,
+                      transform: `translate(-50%, calc(-100% - ${10 * inverse}px)) scale(${inverse})`,
+                      transformOrigin: 'bottom center',
+                    }}
+                    onPointerDown={(event) => event.stopPropagation()}
+                  >
+                    {onEdit && (
+                      <button
+                        className="rounded-full px-3 py-1 text-xs text-ink-100 transition-colors hover:bg-white/10"
+                        onClick={() => onEdit(element.id)}
+                      >
+                        编辑
+                      </button>
+                    )}
+                    {onDelete && (
+                      <button
+                        className="rounded-full px-3 py-1 text-xs text-clay-300 transition-colors hover:bg-clay-500/20"
+                        onClick={() => {
+                          onDelete(element.id)
+                          setSelectedId(null)
+                        }}
+                      >
+                        删除
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             )
           })}
+
+          {/* 「新内容会加到这一页」的标记：很淡的内描边，不抢画面 */}
+          {page && targetPageId === page.id && !drag?.moved && (
+            <div
+              className="pointer-events-none absolute inset-0"
+              style={{ boxShadow: `inset 0 0 0 ${2 * inverse}px rgba(194,96,63,0.45)` }}
+            />
+          )}
+
+          {/* 跨页拖动的落点预览：画在目标页上 */}
+          {crossing && crossing.toIndex === pageNumber && (
+            <>
+              <div
+                className="absolute rounded-sm border-dashed border-clay-400 bg-clay-500/10"
+                style={{
+                  left: crossing.x,
+                  top: crossing.y,
+                  width: crossing.width,
+                  height: crossing.height,
+                  borderWidth: 1.5 * inverse,
+                }}
+              />
+              <div
+                className="absolute whitespace-nowrap rounded-full bg-clay-600/95 px-2.5 py-1 text-[11px] text-white shadow-lg"
+                style={{
+                  left: crossing.x,
+                  top: crossing.y,
+                  transform: `translateY(calc(-100% - ${6 * inverse}px)) scale(${inverse})`,
+                  transformOrigin: 'bottom left',
+                }}
+              >
+                松开即移到{pageNumber === 0 ? '左' : '右'}页
+              </div>
+            </>
+          )}
         </div>
-      ) : null)}
+      ))}
     </div>
   )
 }
@@ -998,7 +1324,7 @@ function BookSpreadSkeleton({ size }: { size: { width: number; height: number } 
   return (
     <div
       className="flex items-center justify-center"
-      style={{ width: size.width * 2 + 14, height: size.height, gap: 14 }}
+      style={{ width: size.width * 2 + BOOK_GAP, height: size.height, gap: BOOK_GAP }}
     >
       {[0, 1].map((index) => (
         <div

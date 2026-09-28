@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Images, ImagePlus, PencilLine, Plus, Share2, Sparkles, Type, X } from 'lucide-react'
 import { useLibraryStore } from '@/store/libraryStore'
@@ -9,7 +9,7 @@ import { Toast, useToast } from '@/components/ui/Toast'
 import { PAPER_LIST } from '@/lib/designTokens'
 import { persistAlbum } from '@/persistence'
 import { uploadPhotos } from '@/services/uploadService'
-import type { ArtTextTemplate, TextElement, ArtTextElement } from '@/types/album'
+import type { AlbumElement, ArtTextTemplate, TextElement, ArtTextElement } from '@/types/album'
 import { TEXT_PRESETS } from '@/lib/designTokens'
 
 const ART_TEXT_OPTIONS: Array<{ id: ArtTextTemplate; name: string; sample: string }> = [
@@ -47,7 +47,15 @@ export function PreviewPage() {
   const [textDraft, setTextDraft] = useState('')
   const [artTemplate, setArtTemplate] = useState<ArtTextTemplate>('travel')
   const [editingTextId, setEditingTextId] = useState<string | null>(null)
+  /** 当前翻开的左右两页 */
+  const [spreadPageIds, setSpreadPageIds] = useState<[string | null, string | null]>([null, null])
+  /** 用户点选的「新内容放哪一页」；没点过或已翻走时为 null，退回默认 */
+  const [pickedPageId, setPickedPageId] = useState<string | null>(null)
   const photoInput = useRef<HTMLInputElement>(null)
+
+  const handleSpreadChange = useCallback((ids: [string | null, string | null]) => {
+    setSpreadPageIds((prev) => (prev[0] === ids[0] && prev[1] === ids[1] ? prev : ids))
+  }, [])
 
   // 离开阅读模式时清理编辑器草稿，避免下次进编辑器带着旧状态
   useEffect(() => () => closeAlbum(), [closeAlbum])
@@ -67,14 +75,35 @@ export function PreviewPage() {
   const currentPage = album.pages[current] ?? album.pages[0]
 
   /**
+   * 新内容（文字 / 艺术字 / 照片）落到哪一页。
+   *
+   * 之前固定用 currentPage，而 currentPage 取的是「跨页的右页，没有才用左页」，
+   * 所以新加的东西永远出现在右边；想放到左页只能拖过去，而拖过中缝又会
+   * 跑出纸面被裁掉。现在：点一下哪一页，新内容就加到哪一页（有淡色描边
+   * 标出来），弹窗里也能直接切换左右。
+   */
+  const visibleIds = spreadPageIds.filter((id): id is string => Boolean(id))
+  const targetPageId =
+    pickedPageId && visibleIds.includes(pickedPageId)
+      ? pickedPageId
+      : spreadPageIds[1] ?? spreadPageIds[0] ?? currentPage?.id ?? null
+  const targetPage = album.pages.find((page) => page.id === targetPageId) ?? currentPage
+  const targetSide: 'left' | 'right' | null =
+    spreadPageIds[0] && spreadPageIds[1]
+      ? targetPage?.id === spreadPageIds[0]
+        ? 'left'
+        : 'right'
+      : null
+
+  /**
    * 阅读器就是制作器：每次操作先把当前翻开的书载入编辑状态，再立即落盘。
    * 不跳到传统画布页面，Reader 收到 library 的新数据后会原位重绘这张纸。
    */
-  const withCurrentPage = async (change: (pageId: string) => void) => {
-    if (!currentPage) return
+  const withCurrentPage = async (change: (pageId: string) => void, page = targetPage) => {
+    if (!page) return
     const editor = useEditorStore.getState()
-    editor.loadAlbum(album, currentPage.id)
-    change(currentPage.id)
+    editor.loadAlbum(album, page.id)
+    change(page.id)
     const changed = useEditorStore.getState().album
     if (changed) await persistAlbum(changed)
   }
@@ -88,7 +117,8 @@ export function PreviewPage() {
           title: `${paper.name}新页`,
           background: { color: paper.color, paper: paper.id, lineColor: paper.lineColor, vignette: 0.2 },
         })
-      })
+        // 加纸是「接在当前这张纸后面」，与新内容放哪一页无关
+      }, currentPage)
       // 从正面翻过去，新纸出现在右侧；末张纸背面则新纸直接展开在右侧。
       const newFront = useEditorStore.getState().album?.pages.find((page) =>
         !existingIds.has(page.id) && (album.pageLayout !== 'duplex' || page.sheetSide === 'front'),
@@ -104,7 +134,7 @@ export function PreviewPage() {
     setPaperPickerOpen(false)
   }
 
-  const currentTextElements = (currentPage?.elements ?? []).filter(
+  const currentTextElements = (targetPage?.elements ?? []).filter(
     (element): element is TextElement | ArtTextElement => element.kind === 'text' || element.kind === 'art-text',
   )
 
@@ -120,6 +150,67 @@ export function PreviewPage() {
     setEditingTextId(element.id)
     setTextDraft(element.data.text)
     if (element.kind === 'art-text') setArtTemplate(element.data.templateId)
+  }
+
+  /** 按 id 在整本书里找文字：跨页时它可能在左页，而 currentPage 指的是右页 */
+  const findTextElement = (elementId: string): TextElement | ArtTextElement | null => {
+    for (const page of album.pages) {
+      const found = page.elements.find((element) => element.id === elementId)
+      if (found && (found.kind === 'text' || found.kind === 'art-text')) return found
+    }
+    return null
+  }
+
+  const editTextById = (elementId: string) => {
+    const element = findTextElement(elementId)
+    if (element) editExistingText(element)
+  }
+
+  const deleteElementById = (elementId: string) => {
+    // 记下被删元素所在的页与图层位置，撤销时原样插回。
+    // 不用编辑器的撤销栈：withCurrentPage 每次都会 loadAlbum 清空历史，
+    // Toast 还在的 5 秒里如果又做了别的操作，「撤一步」撤掉的就不是这次删除了。
+    let removed: { pageId: string; index: number; element: AlbumElement } | null = null
+    for (const page of album.pages) {
+      const index = page.elements.findIndex((element) => element.id === elementId)
+      if (index !== -1) {
+        removed = { pageId: page.id, index, element: page.elements[index] }
+        break
+      }
+    }
+    if (!removed) return
+    const snapshot = removed
+
+    void (async () => {
+      await withCurrentPage(() => {
+        useEditorStore.getState().removeElements([elementId])
+      })
+      show('已删除文字', {
+        action: {
+          label: '撤销',
+          run: () => {
+            const latest = useLibraryStore.getState().albums.find((item) => item.id === album.id)
+            if (!latest) return
+            const editor = useEditorStore.getState()
+            editor.loadAlbum(latest, snapshot.pageId)
+            editor.commit('恢复文字', (draft) => {
+              const page = draft.pages.find((item) => item.id === snapshot.pageId)
+              if (!page || page.elements.some((element) => element.id === elementId)) return
+              page.elements.splice(Math.min(snapshot.index, page.elements.length), 0, snapshot.element)
+            })
+            const restored = useEditorStore.getState().album
+            if (restored) void persistAlbum(restored)
+          },
+        },
+      })
+    })()
+  }
+
+  const deleteEditingText = () => {
+    if (!editingTextId) return
+    deleteElementById(editingTextId)
+    setTextEditor(null)
+    setEditingTextId(null)
   }
 
   const saveText = () => {
@@ -167,15 +258,28 @@ export function PreviewPage() {
         initialIndex={initialIndex}
         onIndexChange={setCurrent}
         navigationRequest={navigationRequest}
-        onMoveTextElement={(elementId, x, y) => {
+        onMoveTextElement={(elementId, x, y, pageId) => {
           void withCurrentPage(() => {
-            useEditorStore.getState().updateElements(
-              [elementId],
-              (element) => ({ ...element, x, y }),
-              '移动文字',
-            )
+            // 同一页：只改位置；换了页：从原页摘下来，按新页的本地坐标放进去
+            useEditorStore.getState().commit('移动文字', (draft) => {
+              const from = draft.pages.find((page) => page.elements.some((element) => element.id === elementId))
+              const to = draft.pages.find((page) => page.id === pageId)
+              if (!from || !to) return
+              const index = from.elements.findIndex((element) => element.id === elementId)
+              const [element] = from.elements.splice(index, 1)
+              element.x = x
+              element.y = y
+              if (from === to) from.elements.splice(index, 0, element)
+              else to.elements.push(element)
+            })
           })
+          setPickedPageId(pageId)
         }}
+        onPickPage={setPickedPageId}
+        onSpreadChange={handleSpreadChange}
+        targetPageId={spreadPageIds[0] && spreadPageIds[1] ? targetPageId : null}
+        onEditTextElement={editTextById}
+        onDeleteElement={deleteElementById}
       />
 
       {/* 打开书后的轻量 DIY 工具栏：不离开实体书阅读体验。 */}
@@ -199,12 +303,12 @@ export function PreviewPage() {
       }} />
 
       {textEditor && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true">
           <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-ink-850 p-5 shadow-2xl">
             <div className="mb-4 flex items-start justify-between">
               <div>
                 <h2 className="text-base text-ink-100">{editingTextId ? '编辑文字' : textEditor === 'art' ? '添加艺术字' : '添加文字'}</h2>
-                <p className="mt-1 text-xs text-ink-500">输入内容后即可放到当前页。</p>
+                <p className="mt-1 text-xs text-ink-500">{editingTextId ? '修改后保存即可更新页面上的文字。' : '输入内容后即可放到当前页。'}</p>
               </div>
               <button className="tool-btn h-7 w-7" onClick={() => setTextEditor(null)} title="关闭"><X className="h-3.5 w-3.5" /></button>
             </div>
@@ -224,6 +328,26 @@ export function PreviewPage() {
                     <span className="mt-1 block truncate text-[10px] opacity-70">{option.sample}</span>
                   </button>
                 ))}
+              </div>
+            )}
+
+            {!editingTextId && targetSide && (
+              <div className="mb-3 flex items-center gap-2 text-[11px] text-ink-500">
+                <span>放到</span>
+                <div className="flex rounded-lg bg-ink-800/70 p-0.5">
+                  {(['left', 'right'] as const).map((side) => (
+                    <button
+                      key={side}
+                      onClick={() => setPickedPageId(side === 'left' ? spreadPageIds[0] : spreadPageIds[1])}
+                      className={`rounded-md px-2.5 py-1 transition-colors ${
+                        targetSide === side ? 'bg-ink-600 text-ink-100' : 'text-ink-400 hover:text-ink-200'
+                      }`}
+                    >
+                      {side === 'left' ? '左页' : '右页'}
+                    </button>
+                  ))}
+                </div>
+                <span className="text-ink-600">也可以先在书上点一下那一页</span>
               </div>
             )}
 
@@ -257,16 +381,26 @@ export function PreviewPage() {
               </div>
             )}
 
-            <div className="mt-4 flex justify-end gap-2">
-              <button className="btn-ghost" onClick={() => setTextEditor(null)}>取消</button>
-              <button className="btn-primary" onClick={saveText}>{editingTextId ? '保存修改' : '添加到页面'}</button>
+            <div className="mt-4 flex items-center gap-2">
+              {editingTextId && (
+                <button
+                  className="mr-auto rounded-lg px-3 py-1.5 text-xs text-clay-300 transition-colors hover:bg-clay-500/15"
+                  onClick={deleteEditingText}
+                >
+                  删除这段文字
+                </button>
+              )}
+              <div className="ml-auto flex gap-2">
+                <button className="btn-ghost" onClick={() => setTextEditor(null)}>取消</button>
+                <button className="btn-primary" onClick={saveText}>{editingTextId ? '保存修改' : '添加到页面'}</button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
       {paperPickerOpen && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true">
           <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-ink-850 p-5 shadow-2xl">
             <div className="mb-4 flex items-start justify-between"><div><h2 className="text-base text-ink-100">选择纸张</h2><p className="mt-1 text-xs text-ink-500">新纸有正反两面，会接在当前纸张后。</p></div><button className="tool-btn h-7 w-7" onClick={() => setPaperPickerOpen(false)}><X className="h-3.5 w-3.5" /></button></div>
             <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">{PAPER_LIST.map((paper) => <button key={paper.id} className="overflow-hidden rounded-xl border border-white/10 text-left transition hover:border-clay-500" onClick={() => addPaper(paper)}><span className="block h-16" style={{ backgroundColor: paper.color }} /><span className="block px-2 py-1.5 text-xs text-ink-300">{paper.name}</span></button>)}</div>
