@@ -586,6 +586,20 @@ export function Reader({
     }
 
     const onPointerUp = (event: PointerEvent) => {
+      /**
+       * 非主键的释放（右键 / 中键）绝不能参与翻页判定。
+       *
+       * pointerdown 已经只认左键，但如果左键 down 的 up 被吞掉
+       * （落在原生菜单上、被弹窗打断等），dragStart 会残留下来；
+       * 此时不加守卫的话，右键释放会被当成一次「左键抬起」去算
+       * 快速划翻 / 点选页 —— 位置离残留起点远、间隔又短，正好触发翻页。
+       * 所以这里只清理残留状态，不做任何翻页动作。
+       */
+      if (event.type !== 'pointercancel' && event.button !== 0) {
+        dragStart.current = null
+        dragPointerId.current = null
+        return
+      }
       const start = dragStart.current
       dragStart.current = null
       dragPointerId.current = null
