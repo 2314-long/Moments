@@ -94,7 +94,16 @@ const PageFaceContent = memo(function PageFaceContent({
     side === 'single' ? 'single' : isBack ? (side === 'left' ? 'right' : 'left') : side
 
   return (
-    <div className="absolute inset-0 overflow-hidden" style={{ backgroundColor: page.background.color }}>
+    <div
+      className="absolute inset-0 overflow-hidden"
+      style={{
+        backgroundColor: page.background.color,
+        /* 常驻合成层：从挂载起就固定文字为灰度抗锯齿，
+           避免翻页时被 rotateY 提升/回落导致的 AA 策略切换（LCD→灰度→LCD 的跳变）。
+           代价：静止文字失去次像素抗锯齿，Windows 上略柔。 */
+        willChange: 'transform',
+      }}
+    >
       <PaperBackground
         background={page.background}
         width={size.width}

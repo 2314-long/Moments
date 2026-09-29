@@ -330,7 +330,7 @@ function FlippingLeaf({
       <div
         className="pointer-events-none absolute inset-0"
         style={{
-          backgroundColor: `rgba(12,10,8,${Math.sin(Math.PI * t) * 0.22})`,
+          backgroundColor: `rgba(12,10,8,${Math.sin(Math.PI * t) * 0.10})`,
           zIndex: 5,
         }}
       />
@@ -340,7 +340,7 @@ function FlippingLeaf({
         style={{
           background: `linear-gradient(${
             side === 'left' ? '270deg' : '90deg'
-          }, rgba(255,250,238,${Math.sin(Math.PI * t) * 0.22}) 0%, rgba(255,250,238,0) 62%)`,
+          }, rgba(255,250,238,${Math.sin(Math.PI * t) * 0.08}) 0%, rgba(255,250,238,0) 62%)`,
           zIndex: 6,
         }}
       />
@@ -453,7 +453,7 @@ function BookSpreadImpl({
             <div
               className="pointer-events-none absolute inset-0"
               style={{
-                background: `linear-gradient(270deg, rgba(0,0,0,${0.40 * shadowOnLeft * lift}) 0%, rgba(0,0,0,0) 68%)`,
+                background: `linear-gradient(270deg, rgba(0,0,0,${0.22 * shadowOnLeft * lift}) 0%, rgba(0,0,0,0) 68%)`,
                 zIndex: 20,
               }}
             />
@@ -482,7 +482,7 @@ function BookSpreadImpl({
             <div
               className="pointer-events-none absolute inset-0"
               style={{
-                background: `linear-gradient(90deg, rgba(0,0,0,${0.46 * shadowOnRight * lift}) 0%, rgba(0,0,0,0) 68%)`,
+                background: `linear-gradient(90deg, rgba(0,0,0,${0.26 * shadowOnRight * lift}) 0%, rgba(0,0,0,0) 68%)`,
                 zIndex: 20,
               }}
             />
