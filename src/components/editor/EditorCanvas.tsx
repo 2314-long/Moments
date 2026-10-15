@@ -106,6 +106,14 @@ export function EditorCanvas({
   const crossPageRef = useRef<{ targetPageId: string; offsetX: number } | null>(null)
   const [crossPageHint, setCrossPageHint] = useState<{ side: 'left' | 'right' } | null>(null)
 
+  const handleAutoHeight = useCallback(
+    (elementId: string, height: number) => {
+      // 高度是该次文字修改的派生结果，不额外占用一次撤销记录。
+      patchElements([elementId], { height }, '适应文字高度')
+    },
+    [patchElements],
+  )
+
   const { target: dropTarget, payload: dropPayload, hasFileDrag: dropFileDrag, clear: clearDrop } =
     useCanvasDrop({ pageNodes, scale: zoom })
 
@@ -664,6 +672,7 @@ export function EditorCanvas({
                           '编辑文字',
                         )
                       }}
+                      onAutoHeight={handleAutoHeight}
                     />
                   </div>
                 ))}

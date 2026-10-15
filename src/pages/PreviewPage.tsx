@@ -11,6 +11,7 @@ import { persistAlbum } from '@/persistence'
 import { uploadPhotos } from '@/services/uploadService'
 import type { AlbumElement, ArtTextTemplate, TextElement, ArtTextElement } from '@/types/album'
 import { TEXT_PRESETS } from '@/lib/designTokens'
+import { measuredTextHeight } from '@/lib/textLayout'
 
 const ART_TEXT_OPTIONS: Array<{ id: ArtTextTemplate; name: string; sample: string }> = [
   { id: 'handwritten', name: '手写', sample: '写下这一刻' },
@@ -225,8 +226,14 @@ export function PreviewPage() {
           useEditorStore.getState().updateElements(
             [editingTextId],
             (element) => {
-              if (element.kind === 'text') return { ...element, data: { ...element.data, text: value } }
-              if (element.kind === 'art-text') return { ...element, data: { ...element.data, text: value, templateId: artTemplate } }
+              if (element.kind === 'text') {
+                const next = { ...element, data: { ...element.data, text: value } }
+                return { ...next, height: measuredTextHeight(next) }
+              }
+              if (element.kind === 'art-text') {
+                const next = { ...element, data: { ...element.data, text: value, templateId: artTemplate } }
+                return { ...next, height: Math.max(element.height, measuredTextHeight(next)) }
+              }
               return element
             },
             '编辑文字',

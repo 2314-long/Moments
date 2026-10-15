@@ -72,6 +72,7 @@ function TextView({ element }: { element: TextElement }) {
   const d = element.data
   return (
     <div
+      data-auto-height-content
       style={{
         width: '100%',
         height: '100%',
@@ -107,7 +108,7 @@ function ArtTextView({ element }: { element: ArtTextElement }) {
     seal: { border: `5px double ${d.accentColor}`, borderRadius: '50%', padding: 12, color: d.accentColor },
     calligraphy: { textShadow: `2px 3px 0 color-mix(in srgb, ${d.accentColor} 35%, transparent)` },
   }
-  return <div style={{ ...effects[d.templateId], width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: d.align === 'left' ? 'flex-start' : d.align === 'right' ? 'flex-end' : 'center', fontFamily: d.fontFamily, fontSize: d.fontSize, fontWeight: d.fontWeight, letterSpacing: d.letterSpacing, lineHeight: d.lineHeight, color: d.color, whiteSpace: 'pre-wrap', textAlign: d.align, overflow: 'hidden' }}>{d.text}</div>
+  return <div data-auto-height-content style={{ ...effects[d.templateId], width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: d.align === 'left' ? 'flex-start' : d.align === 'right' ? 'flex-end' : 'center', fontFamily: d.fontFamily, fontSize: d.fontSize, fontWeight: d.fontWeight, letterSpacing: d.letterSpacing, lineHeight: d.lineHeight, color: d.color, whiteSpace: 'pre-wrap', textAlign: d.align, overflow: 'hidden' }}>{d.text}</div>
 }
 
 /* ------------------------------------------------------------------ *
@@ -161,7 +162,7 @@ function NoteView({ element }: { element: NoteElement }) {
           }}
         />
       )}
-      <div className="relative h-full w-full p-3" style={{ fontFamily: d.fontFamily, fontSize: d.fontSize, lineHeight: 1.65, color: d.color, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflow: 'hidden' }}>
+      <div data-auto-height-content className="relative h-full w-full p-3" style={{ fontFamily: d.fontFamily, fontSize: d.fontSize, lineHeight: 1.65, color: d.color, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflow: 'hidden' }}>
         {d.text}
       </div>
       {/* 便签左上角的阴影，模拟翘起 */}

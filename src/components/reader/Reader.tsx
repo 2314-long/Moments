@@ -5,6 +5,7 @@ import { BOOK_GAP, BookSpread, type FlipVisual } from '@/components/book/BookSpr
 import { usePhotosReady } from '@/hooks/usePhotoUrl'
 import { usePhotoStore } from '@/store/photoStore'
 import { buildDuplexSpreads } from '@/lib/bookLayout'
+import { measuredTextHeight } from '@/lib/textLayout'
 
 /**
  * 沉浸式翻阅。
@@ -1194,6 +1195,9 @@ function TextMoveOverlays({
           style={{ left: pageNumber === 0 ? 0 : pageWidth + BOOK_GAP, width: pageWidth, height: pageHeight }}
         >
           {page?.elements.filter((element) => element.kind === 'text' || element.kind === 'art-text').map((element) => {
+            // 旧存档可能是在修复前写入的，height 仍只包含第一行。
+            // 交互层在读取时按真实宽度补测，确保已有文字无需重新编辑也能被完整选中。
+            const textHeight = Math.max(element.height, measuredTextHeight(element))
             const dragging = drag?.id === element.id && drag.moved
             // 被拖到另一页时，原位只留一个淡淡的影子，真正的预览画在目标页上
             const leftBehind = dragging && crossing !== null
@@ -1212,7 +1216,7 @@ function TextMoveOverlays({
                   }`}
                   data-text-move=""
                   title="单击选中 · 拖动移动（可拖到另一页） · 双击编辑 · Delete 删除"
-                  style={{ left: x, top: y, width: element.width, height: element.height, transform: `rotate(${element.rotation}deg)`, touchAction: 'none', borderWidth: 1.5 * inverse }}
+                  style={{ left: x, top: y, width: element.width, height: textHeight, transform: `rotate(${element.rotation}deg)`, touchAction: 'none', borderWidth: 1.5 * inverse }}
                   onPointerDown={(event) => {
                     if (event.button !== 0) return
                     event.preventDefault()
@@ -1232,7 +1236,7 @@ function TextMoveOverlays({
                       startClientX: event.clientX,
                       startClientY: event.clientY,
                       width: element.width,
-                      height: element.height,
+                      height: textHeight,
                       x: element.x,
                       y: element.y,
                       moved: false,

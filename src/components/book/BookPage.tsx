@@ -4,6 +4,7 @@ import type { Page } from '@/types/album'
 import { PaperBackground } from '@/components/paper/PaperBackground'
 import { AlbumElementView } from '@/components/elements/AlbumElementView'
 import { PAGE_HEIGHT } from '@/lib/designTokens'
+import { measuredTextHeight } from '@/lib/textLayout'
 
 /**
  * 一页「厚纸板」。
@@ -116,23 +117,30 @@ const PageFaceContent = memo(function PageFaceContent({
         内容的方向由调用方的 3D 变换负责摆正，这里不再做任何镜像。
       */}
       <div className="absolute inset-0">
-        {page.elements.map((element) => (
-          <div
-            key={element.id}
-            style={{
-              position: 'absolute',
-              left: element.x,
-              top: element.y,
-              width: element.width,
-              height: element.height,
-              transform: `rotate(${element.rotation}deg)`,
-              transformOrigin: 'center center',
-              opacity: element.opacity,
-            }}
-          >
-            <AlbumElementView element={element} />
-          </div>
-        ))}
+        {page.elements.map((element) => {
+          // 与阅读器交互层保持一致：兼容修复前只存了首行高度的旧文字。
+          const height =
+            element.kind === 'text' || element.kind === 'art-text'
+              ? Math.max(element.height, measuredTextHeight(element))
+              : element.height
+          return (
+            <div
+              key={element.id}
+              style={{
+                position: 'absolute',
+                left: element.x,
+                top: element.y,
+                width: element.width,
+                height,
+                transform: `rotate(${element.rotation}deg)`,
+                transformOrigin: 'center center',
+                opacity: element.opacity,
+              }}
+            >
+              <AlbumElementView element={element} />
+            </div>
+          )
+        })}
       </div>
     </div>
   )

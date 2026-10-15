@@ -16,6 +16,7 @@ import { newElementId, newPageId } from '@/lib/id'
 import { pageIndexAfterSheet, pagesForSheet } from '@/lib/bookLayout'
 import { STICKER_LIBRARY } from '@/lib/stickerLibrary'
 import { deepClone } from '@/lib/utils'
+import { measuredTextHeight } from '@/lib/textLayout'
 
 const STICKER_INDEX = new Map(STICKER_LIBRARY.map((s) => [s.id, s]))
 
@@ -500,15 +501,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!pageId) return
     const token = TEXT_PRESETS[preset]
     const text = opts.text ?? token.placeholder
-    const lineCount = text.split('\n').length
-    const height = Math.ceil(token.fontSize * token.lineHeight * lineCount + 8)
     const element: AlbumElement = {
       id: newElementId(),
       kind: 'text',
       x: opts.x ?? 96,
       y: opts.y ?? 360,
       width: preset === 'title' ? 460 : 340,
-      height,
+      height: Math.ceil(token.fontSize * token.lineHeight + 8),
       rotation: 0,
       opacity: 1,
       locked: false,
@@ -526,6 +525,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         underline: token.underline,
       },
     }
+    element.height = measuredTextHeight(element)
     appendToPage(get, pageId, element, '添加文字')
   },
 
@@ -550,6 +550,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         lineHeight: 1.25, color: byTemplate.color, align: 'center', templateId, accentColor: byTemplate.accent,
       },
     }
+    element.height = Math.max(element.height, measuredTextHeight(element))
     appendToPage(get, pageId, element, '添加艺术字')
   },
 

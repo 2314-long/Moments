@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import type { AlbumElement } from '@/types/album'
 import { AlbumElementView } from '@/components/elements/AlbumElementView'
@@ -25,6 +25,8 @@ export interface ElementShellProps {
   onPointerDown: (event: ReactPointerEvent, elementId: string) => void
   onHandlePointerDown: (event: ReactPointerEvent, elementId: string, handle: ResizeHandle | 'rotate') => void
   onTextCommit: (elementId: string, text: string) => void
+  /** 可换行文字的实际高度变化后，同步回页面坐标系。 */
+  onAutoHeight: (elementId: string, height: number) => void
   onDoubleClick: (elementId: string) => void
   editing: boolean
   setEditing: (elementId: string | null) => void
@@ -65,11 +67,13 @@ function ElementShellImpl({
   onPointerDown,
   onHandlePointerDown,
   onTextCommit,
+  onAutoHeight,
   onDoubleClick,
   editing,
   setEditing,
 }: ElementShellProps) {
   const [hovered, setHovered] = useState(false)
+  const shellRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // 手柄保持屏幕尺寸恒定
@@ -85,11 +89,34 @@ function ElementShellImpl({
     }
   }, [editing])
 
+  /**
+   * 文本元素的高度原先只在创建时按第一行估算，之后换行会被固定外壳裁掉。
+   * 读取内容节点的 scrollHeight 可以得到实际排版高度；只在内容、文字样式或
+   * 宽度变化时同步，用户单独拖动上下手柄设置的高度不会被立即覆盖。
+   */
+  useLayoutEffect(() => {
+    if (editing || !isAutoHeightElement(element)) return
+    const content = shellRef.current?.querySelector<HTMLElement>('[data-auto-height-content]')
+    if (!content) return
+    const height = Math.ceil(content.scrollHeight)
+    if (height > 0 && Math.abs(height - element.height) > 0.5) {
+      onAutoHeight(element.id, height)
+    }
+  }, [
+    editing,
+    element.id,
+    element.kind,
+    element.width,
+    element.data,
+    onAutoHeight,
+  ])
+
   const showOutline = selected || hovered
   const editable = editableTextOf(element) !== null
 
   return (
     <div
+      ref={shellRef}
       data-element-id={element.id}
       style={{
         position: 'absolute',
@@ -258,6 +285,10 @@ function ElementShellImpl({
       )}
     </div>
   )
+}
+
+function isAutoHeightElement(element: AlbumElement): boolean {
+  return element.kind === 'text' || element.kind === 'art-text' || element.kind === 'note'
 }
 
 /* ------------------------------------------------------------------ *
