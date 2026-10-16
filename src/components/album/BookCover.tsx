@@ -191,6 +191,39 @@ export function BookCover({
   )
 }
 
+/**
+ * 翻开后的内封。它与 BookCover 使用同一套尺寸、主题色和布面纹理，
+ * 但不重复正面的照片、标题和页码。
+ */
+export function BookCoverInside({ album, width, height }: Pick<BookCoverProps, 'album' | 'width' | 'height'>) {
+  const theme = THEMES[album.theme]
+
+  return (
+    <div
+      className="relative h-full w-full overflow-hidden rounded-[3px]"
+      style={{
+        width,
+        height,
+        backgroundColor: theme.cover,
+        boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.07)',
+      }}
+      aria-hidden="true"
+    >
+      <div
+        className="pointer-events-none absolute inset-0 opacity-[0.5]"
+        style={{
+          backgroundImage: `repeating-linear-gradient(45deg, rgba(255,255,255,0.028) 0 1px, transparent 1px 3px),
+            repeating-linear-gradient(-45deg, rgba(0,0,0,0.05) 0 1px, transparent 1px 3px)`,
+        }}
+      />
+      <div
+        className="pointer-events-none absolute inset-y-0 right-0"
+        style={{ width: 2, background: 'rgba(0,0,0,0.22)' }}
+      />
+    </div>
+  )
+}
+
 export function formatRange(start?: string, end?: string): string {
   if (!start) return ''
   const s = start.slice(0, 10).replace(/-/g, '.')

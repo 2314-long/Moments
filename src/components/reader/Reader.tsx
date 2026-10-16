@@ -2,6 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { ChevronLeft, ChevronRight, Maximize2, Minimize2 } from 'lucide-react'
 import type { Album, Page, PhotoAsset } from '@/types/album'
 import { BOOK_GAP, BookSpread, type FlipVisual } from '@/components/book/BookSpread'
+import { BookCoverInside } from '@/components/album/BookCover'
+import { useBookOpening } from '@/components/transition/BookOpeningTransition'
 import { usePhotosReady } from '@/hooks/usePhotoUrl'
 import { usePhotoStore } from '@/store/photoStore'
 import { buildDuplexSpreads } from '@/lib/bookLayout'
@@ -49,7 +51,6 @@ export interface ReaderProps {
   /** 当前跨页左右两页的 id（翻页落定后回调），供外层决定新内容放哪一页 */
   onSpreadChange?: (pageIds: [string | null, string | null]) => void
 }
-
 /** 焦点在输入框里（或弹窗里）时，阅读器不应抢键盘：否则空格会翻页而不是打字 */
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false
@@ -116,15 +117,17 @@ function usePrefersReducedMotion(): boolean {
   return reduced
 }
 
-/** 把旧版单面页面数组切成「跨页」：奇数页时首张页面单独一屏 */
+/**
+ * 把旧版单面页面数组切成跨页。
+ *
+ * 第一张纸始终在右侧，左侧留给翻开的硬壳内封；这样从首页开书时，
+ * 封面可直接绕书脊翻到左边，不会提前露出第一张内容页。
+ */
 function buildLegacySpreads(pages: Page[]): Array<[number | null, number | null]> {
   if (!pages.length) return [[null, null]]
   const spreads: Array<[number | null, number | null]> = []
-  let cursor = 0
-  if (pages.length % 2 === 1) {
-    spreads.push([null, 0])
-    cursor = 1
-  }
+  spreads.push([null, 0])
+  let cursor = 1
   for (let index = cursor; index < pages.length; index += 2) {
     spreads.push([index, pages[index + 1] === undefined ? null : index + 1])
   }
@@ -382,6 +385,8 @@ export function Reader({
   onSpreadChange,
 }: ReaderProps) {
   const rootRef = useRef<HTMLDivElement>(null)
+  const { openingPhase } = useBookOpening()
+  const showCoverInside = openingPhase === null || openingPhase === 'pages' || openingPhase === 'handoff'
   const spreads = useMemo(
     () => album.pageLayout === 'duplex' ? buildDuplexSpreads(album.pages) : buildLegacySpreads(album.pages),
     [album.pageLayout, album.pages],
@@ -811,6 +816,7 @@ export function Reader({
         flip={flipVisual}
         zoomed={zoomed}
         photosReady={photosReady}
+        showCoverInside={showCoverInside}
         onMoveTextElement={onMoveTextElement}
         onResizePhotoElement={onResizePhotoElement}
         onEditTextElement={onEditTextElement}
@@ -913,6 +919,7 @@ function BookViewport({
   flip,
   zoomed,
   photosReady,
+  showCoverInside,
   onMoveTextElement,
   onResizePhotoElement,
   onEditTextElement,
@@ -924,6 +931,7 @@ function BookViewport({
   flip: FlipVisual | null
   zoomed: boolean
   photosReady: boolean
+  showCoverInside: boolean
   onMoveTextElement?: (elementId: string, x: number, y: number, pageId: string) => void
   onResizePhotoElement?: (elementId: string, width: number, height: number, pageId: string) => void
   onEditTextElement?: (elementId: string) => void
@@ -968,7 +976,10 @@ function BookViewport({
               left={left}
               right={right}
               flip={flip}
-              emptySlot={(side) => <CoverLeafBoard size={size} side={side} />}
+              /* 首屏左页是内封，尺寸直接取页面尺寸，严格与右页对齐。 */
+              emptySlot={(side) => side === 'left' && showCoverInside
+                ? <BookCoverInside album={album} width={size.width} height={size.height} />
+                : null}
             />
           ) : (
             <BookSpreadSkeleton size={size} />
@@ -988,29 +999,6 @@ function BookViewport({
           )}
         </div>
 
-        {/* 装订封面边缘：让「这是一本精装册子」在书本外沿也有体现 */}
-        <div
-          className="pointer-events-none absolute"
-          style={{
-            left: -6,
-            top: 8,
-            bottom: 8,
-            width: 6,
-            borderRadius: '3px 0 0 3px',
-            background: 'linear-gradient(90deg, rgba(0,0,0,0.55), rgba(0,0,0,0.18))',
-          }}
-        />
-        <div
-          className="pointer-events-none absolute"
-          style={{
-            right: -6,
-            top: 8,
-            bottom: 8,
-            width: 6,
-            borderRadius: '0 3px 3px 0',
-            background: 'linear-gradient(270deg, rgba(0,0,0,0.55), rgba(0,0,0,0.18))',
-          }}
-        />
       </div>
     </div>
   )
@@ -1423,58 +1411,6 @@ function BookSpreadSkeleton({ size }: { size: { width: number; height: number } 
           style={{ backgroundColor: 'rgba(247,243,234,0.06)' }}
         />
       ))}
-    </div>
-  )
-}
-
-/** 首尾页缺少纸面时，以硬壳封面 / 封底补齐整本书的外侧。 */
-function CoverLeafBoard({ size, side }: { size: { width: number; height: number }; side: 'left' | 'right' }) {
-  const thickness = Math.max(4, Math.round(size.height * 0.011))
-  const isFrontCover = side === 'left'
-  const stackSide = isFrontCover ? 'left' : 'right'
-  const spineSide = isFrontCover ? 'right' : 'left'
-  return (
-    <div className="relative h-full w-full" style={{ transformStyle: 'preserve-3d' }}>
-      <div
-        className="absolute inset-0 overflow-hidden"
-        style={{
-          backgroundColor: '#20191a',
-          backgroundImage:
-            'repeating-linear-gradient(52deg, rgba(255,255,255,0.022) 0 1px, transparent 1px 4px), radial-gradient(120% 90% at 30% 20%, rgba(120,90,70,0.22), transparent 60%)',
-          boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.05)',
-        }}
-      >
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center">
-          <div className="h-px w-16" style={{ backgroundColor: 'rgba(232,220,196,0.24)' }} />
-          <p
-            className="max-w-[62%] font-serif text-sm leading-relaxed"
-            style={{ color: 'rgba(232,220,196,0.45)' }}
-          >
-            {isFrontCover ? <>硬壳封面<br />从右边翻开这一页</> : '硬壳封底'}
-          </p>
-        </div>
-
-        {/* 书本外侧的书口：露出下面压着的纸板边 */}
-        <div
-          className="absolute inset-y-0"
-          style={{
-            width: thickness,
-            [stackSide]: 0,
-            backgroundColor: '#e2d9c6',
-            backgroundImage:
-              'repeating-linear-gradient(0deg, rgba(90,78,58,0.22) 0 0.7px, rgba(255,255,255,0.30) 0.7px 1.7px)',
-          }}
-        />
-        {/* 封面 / 封底内侧压暗 */}
-        <div
-          className="absolute inset-y-0"
-          style={{
-            [spineSide]: 0,
-            width: 30,
-            background: `linear-gradient(${isFrontCover ? '270deg' : '90deg'}, rgba(0,0,0,0.55), rgba(0,0,0,0))`,
-          }}
-        />
-      </div>
     </div>
   )
 }

@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { Album } from '@/types/album'
-import { BookCover } from '@/components/album/BookCover'
+import { BookCover, BookCoverInside } from '@/components/album/BookCover'
 import { BOOK_GAP } from '@/components/book/BookSpread'
 
 type OpeningPhase = 'focus' | 'center' | 'opening' | 'pages' | 'handoff'
@@ -12,6 +12,7 @@ interface OpeningRequest {
 
 interface OpeningContextValue {
   opening: boolean
+  openingPhase: OpeningPhase | null
   openAlbum: (album: Album, source: HTMLElement) => void
 }
 
@@ -37,16 +38,19 @@ export function BookOpeningProvider({ children }: { children: React.ReactNode })
   useEffect(() => {
     if (!request) return
     const timers = [
-      window.setTimeout(() => setPhase('center'), 80),
-      window.setTimeout(() => setPhase('opening'), 620),
-      window.setTimeout(() => setPhase('pages'), 1120),
-      window.setTimeout(() => setPhase('handoff'), 1800),
-      window.setTimeout(() => setRequest(null), 2040),
+      window.setTimeout(() => setPhase('center'), 70),
+      window.setTimeout(() => setPhase('opening'), 580),
+      window.setTimeout(() => setPhase('pages'), 1240),
+      window.setTimeout(() => setPhase('handoff'), 1740),
+      window.setTimeout(() => setRequest(null), 1980),
     ]
     return () => timers.forEach(window.clearTimeout)
   }, [request])
 
-  const value = useMemo(() => ({ opening: Boolean(request), openAlbum }), [openAlbum, request])
+  const value = useMemo(
+    () => ({ opening: Boolean(request), openingPhase: request ? phase : null, openAlbum }),
+    [openAlbum, phase, request],
+  )
 
   return (
     <OpeningContext.Provider value={value}>
@@ -72,7 +76,10 @@ function OpeningOverlay({ request, phase }: { request: OpeningRequest; phase: Op
   )
   const centeredWidth = baseSpreadWidth * fitScale
   const centeredHeight = album.pageSize.height * fitScale
-  const coverScale = (album.pageSize.width / 196) * fitScale
+  // 首页封面预览是 196×261，阅读器页面是 720×900，二者纵横比不同。
+  // 必须分别按目标页面的宽、高缩放，不能只按宽度等比放大。
+  const coverScaleX = (album.pageSize.width / 196) * fitScale
+  const coverScaleY = (album.pageSize.height / 261) * fitScale
   const startTransform = `translate(${rect.left}px, ${rect.top}px) rotate(-0.7deg) scale(${rect.width / 196})`
   const isCenter = phase !== 'focus'
   const isOpening = phase === 'opening' || phase === 'pages'
@@ -85,22 +92,27 @@ function OpeningOverlay({ request, phase }: { request: OpeningRequest; phase: Op
       aria-live="polite"
       aria-label={`正在打开《${album.title}》`}
     >
-      <div className={`book-opening-backdrop ${isCenter ? 'is-centered' : ''} ${isPages ? 'is-pages' : ''}`} />
+      <div className={`book-opening-backdrop ${isCenter ? 'is-centered' : ''} ${isOpening ? 'is-opening' : ''} ${isPages ? 'is-pages' : ''}`} />
       <div
         className={`book-opening-stage ${isCenter ? 'is-centered' : ''} ${isOpening ? 'is-opening' : ''} ${isPages ? 'is-pages' : ''}`}
         style={{
           '--book-start-transform': startTransform,
           '--book-centered-width': `${centeredWidth}px`,
           '--book-centered-height': `${centeredHeight}px`,
-          '--book-cover-scale': String(coverScale),
+          '--book-cover-scale-x': String(coverScaleX),
+          '--book-cover-scale-y': String(coverScaleY),
         } as React.CSSProperties}
       >
         <div className="book-opening-cover">
           <div className="book-opening-cover-turn">
-            <BookCover album={album} width={196} height={261} showPages={false} />
+            <div className="book-opening-cover-front">
+              <BookCover album={album} width={196} height={261} showPages={false} />
+            </div>
+            <div className="book-opening-cover-back">
+              <BookCoverInside album={album} width={196} height={261} />
+            </div>
           </div>
         </div>
-        <div className="book-opening-glint" />
       </div>
     </div>
   )
