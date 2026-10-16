@@ -9,7 +9,7 @@ import { Toast, useToast } from '@/components/ui/Toast'
 import { PAPER_LIST } from '@/lib/designTokens'
 import { persistAlbum } from '@/persistence'
 import { uploadPhotos } from '@/services/uploadService'
-import type { AlbumElement, ArtTextTemplate, TextElement, ArtTextElement } from '@/types/album'
+import type { AlbumElement, ArtTextTemplate, PhotoElement, PhotoStyle, TextElement, ArtTextElement } from '@/types/album'
 import { TEXT_PRESETS } from '@/lib/designTokens'
 import { measuredTextHeight } from '@/lib/textLayout'
 
@@ -20,6 +20,15 @@ const ART_TEXT_OPTIONS: Array<{ id: ArtTextTemplate; name: string; sample: strin
   { id: 'magazine', name: '杂志', sample: 'WEEKEND NOTES' },
   { id: 'seal', name: '印章', sample: '纪念' },
   { id: 'calligraphy', name: '书法', sample: '山川入梦' },
+]
+
+const PHOTO_STYLE_OPTIONS: Array<{ id: PhotoStyle; name: string }> = [
+  { id: 'plain', name: '简约' },
+  { id: 'polaroid', name: '拍立得' },
+  { id: 'film', name: '胶片' },
+  { id: 'instant', name: '相纸' },
+  { id: 'vintage', name: '复古' },
+  { id: 'torn', name: '撕纸' },
 ]
 
 /**
@@ -48,6 +57,9 @@ export function PreviewPage() {
   const [textDraft, setTextDraft] = useState('')
   const [artTemplate, setArtTemplate] = useState<ArtTextTemplate>('travel')
   const [editingTextId, setEditingTextId] = useState<string | null>(null)
+  const [editingPhotoId, setEditingPhotoId] = useState<string | null>(null)
+  const [photoStyleDraft, setPhotoStyleDraft] = useState<PhotoStyle>('plain')
+  const [photoFitDraft, setPhotoFitDraft] = useState<'cover' | 'contain'>('cover')
   /** 当前翻开的左右两页 */
   const [spreadPageIds, setSpreadPageIds] = useState<[string | null, string | null]>([null, null])
   /** 用户点选的「新内容放哪一页」；没点过或已翻走时为 null，退回默认 */
@@ -162,9 +174,38 @@ export function PreviewPage() {
     return null
   }
 
-  const editTextById = (elementId: string) => {
-    const element = findTextElement(elementId)
-    if (element) editExistingText(element)
+  const editElementById = (elementId: string) => {
+    const text = findTextElement(elementId)
+    if (text) {
+      editExistingText(text)
+      return
+    }
+    for (const page of album.pages) {
+      const photo = page.elements.find((element): element is PhotoElement => element.id === elementId && element.kind === 'photo')
+      if (!photo) continue
+      setEditingPhotoId(photo.id)
+      setPhotoStyleDraft(photo.data.style)
+      setPhotoFitDraft(photo.data.fit)
+      return
+    }
+  }
+
+  const savePhoto = () => {
+    if (!editingPhotoId) return
+    const photoId = editingPhotoId
+    void (async () => {
+      await withCurrentPage(() => {
+        useEditorStore.getState().updateElements(
+          [photoId],
+          (element) => element.kind === 'photo'
+            ? { ...element, data: { ...element.data, style: photoStyleDraft, fit: photoFitDraft } }
+            : element,
+          '编辑照片',
+        )
+      })
+      show('照片已更新')
+      setEditingPhotoId(null)
+    })()
   }
 
   const deleteElementById = (elementId: string) => {
@@ -282,9 +323,20 @@ export function PreviewPage() {
           })
           setPickedPageId(pageId)
         }}
+        onResizePhotoElement={(elementId, width, height, pageId) => {
+          void withCurrentPage(() => {
+            useEditorStore.getState().commit('缩放照片', (draft) => {
+              const page = draft.pages.find((item) => item.id === pageId)
+              const photo = page?.elements.find((element) => element.id === elementId)
+              if (!photo || photo.kind !== 'photo') return
+              photo.width = width
+              photo.height = height
+            })
+          })
+        }}
         onPickPage={setPickedPageId}
         onSpreadChange={handleSpreadChange}
-        onEditTextElement={editTextById}
+        onEditTextElement={editElementById}
         onDeleteElement={deleteElementById}
       />
 
@@ -401,6 +453,30 @@ export function PreviewPage() {
                 <button className="btn-primary" onClick={saveText}>{editingTextId ? '保存修改' : '添加到页面'}</button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {editingPhotoId && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-ink-850 p-5 shadow-2xl">
+            <div className="mb-4 flex items-start justify-between">
+              <div><h2 className="text-base text-ink-100">编辑照片</h2><p className="mt-1 text-xs text-ink-500">选择相框样式和照片在相框中的展示方式。</p></div>
+              <button className="tool-btn h-7 w-7" onClick={() => setEditingPhotoId(null)} title="关闭"><X className="h-3.5 w-3.5" /></button>
+            </div>
+            <div className="mb-4">
+              <div className="mb-2 text-xs text-ink-400">相框样式</div>
+              <div className="grid grid-cols-3 gap-2">
+                {PHOTO_STYLE_OPTIONS.map((option) => <button key={option.id} onClick={() => setPhotoStyleDraft(option.id)} className={`rounded-lg border px-2 py-2 text-xs transition ${photoStyleDraft === option.id ? 'border-clay-500 bg-clay-500/10 text-ink-100' : 'border-white/10 bg-ink-800/50 text-ink-400 hover:border-white/20'}`}>{option.name}</button>)}
+              </div>
+            </div>
+            <div className="mb-5">
+              <div className="mb-2 text-xs text-ink-400">相框内照片</div>
+              <div className="flex gap-2">
+                {([['cover', '铺满裁切'], ['contain', '完整显示']] as const).map(([fit, label]) => <button key={fit} onClick={() => setPhotoFitDraft(fit)} className={`rounded-lg border px-3 py-2 text-xs transition ${photoFitDraft === fit ? 'border-clay-500 bg-clay-500/10 text-ink-100' : 'border-white/10 bg-ink-800/50 text-ink-400 hover:border-white/20'}`}>{label}</button>)}
+              </div>
+            </div>
+            <div className="flex justify-end gap-2"><button className="btn-ghost" onClick={() => setEditingPhotoId(null)}>取消</button><button className="btn-primary" onClick={savePhoto}>保存修改</button></div>
           </div>
         </div>
       )}

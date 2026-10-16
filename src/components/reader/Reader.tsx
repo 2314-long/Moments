@@ -38,6 +38,8 @@ export interface ReaderProps {
   /** Select a page after a structural edit; optionally animate forward to it. */
   navigationRequest?: { token: number; pageId: string; turn?: boolean }
   onMoveTextElement?: (elementId: string, x: number, y: number, pageId: string) => void
+  /** 阅读页内调整照片大小（保持照片原有比例） */
+  onResizePhotoElement?: (elementId: string, width: number, height: number, pageId: string) => void
   /** 双击 / 点「编辑」时打开文字编辑 */
   onEditTextElement?: (elementId: string) => void
   /** 点「删除」或按 Delete / Backspace 时删除文字 */
@@ -373,6 +375,7 @@ export function Reader({
   onIndexChange,
   navigationRequest,
   onMoveTextElement,
+  onResizePhotoElement,
   onEditTextElement,
   onDeleteElement,
   onPickPage,
@@ -809,6 +812,7 @@ export function Reader({
         zoomed={zoomed}
         photosReady={photosReady}
         onMoveTextElement={onMoveTextElement}
+        onResizePhotoElement={onResizePhotoElement}
         onEditTextElement={onEditTextElement}
         onDeleteElement={onDeleteElement}
       />
@@ -910,6 +914,7 @@ function BookViewport({
   zoomed,
   photosReady,
   onMoveTextElement,
+  onResizePhotoElement,
   onEditTextElement,
   onDeleteElement,
 }: {
@@ -920,6 +925,7 @@ function BookViewport({
   zoomed: boolean
   photosReady: boolean
   onMoveTextElement?: (elementId: string, x: number, y: number, pageId: string) => void
+  onResizePhotoElement?: (elementId: string, width: number, height: number, pageId: string) => void
   onEditTextElement?: (elementId: string) => void
   onDeleteElement?: (elementId: string) => void
 }) {
@@ -975,6 +981,7 @@ function BookViewport({
               scale={scale}
               interactive={!flip}
               onMove={onMoveTextElement}
+              onResizePhoto={onResizePhotoElement}
               onEdit={onEditTextElement}
               onDelete={onDeleteElement}
             />
@@ -1037,6 +1044,7 @@ function TextMoveOverlays({
   onMove,
   onEdit,
   onDelete,
+  onResizePhoto,
 }: {
   pages: [Page | null, Page | null]
   pageWidth: number
@@ -1046,6 +1054,7 @@ function TextMoveOverlays({
   onMove: (elementId: string, x: number, y: number, pageId: string) => void
   onEdit?: (elementId: string) => void
   onDelete?: (elementId: string) => void
+  onResizePhoto?: (elementId: string, width: number, height: number, pageId: string) => void
 }) {
   type DragState = {
     id: string
@@ -1069,8 +1078,20 @@ function TextMoveOverlays({
   }
 
   const [drag, setDrag] = useState<DragState | null>(null)
+  type ResizeState = {
+    id: string
+    pageIndex: number
+    startClientX: number
+    startClientY: number
+    startWidth: number
+    startHeight: number
+    width: number
+    height: number
+  }
+  const [resize, setResize] = useState<ResizeState | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const dragRef = useRef<DragState | null>(null)
+  const resizeRef = useRef<ResizeState | null>(null)
   const layerRef = useRef<HTMLDivElement>(null)
   /** 两张纸各自的容器节点：用真实的屏幕矩形判断指针落在哪一页 */
   const pageNodes = useRef<Array<HTMLDivElement | null>>([null, null])
@@ -1146,6 +1167,37 @@ function TextMoveOverlays({
     }
   }, [onMove, pageHeight, pageWidth, pages, scale])
 
+  // 照片缩放：右下角手柄只按宽度变化，按原始比例同步高度。
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent) => {
+      const active = resizeRef.current
+      if (!active) return
+      const width = Math.max(48, active.startWidth + (event.clientX - active.startClientX) / scale)
+      const height = Math.max(48, width * (active.startHeight / active.startWidth))
+      const next = { ...active, width, height }
+      resizeRef.current = next
+      setResize(next)
+    }
+    const onPointerUp = () => {
+      const active = resizeRef.current
+      resizeRef.current = null
+      setResize(null)
+      if (!active) return
+      const page = pages[active.pageIndex]
+      if (page && (active.width !== active.startWidth || active.height !== active.startHeight)) {
+        onResizePhoto?.(active.id, active.width, active.height, page.id)
+      }
+    }
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', onPointerUp)
+    window.addEventListener('pointercancel', onPointerUp)
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', onPointerUp)
+      window.removeEventListener('pointercancel', onPointerUp)
+    }
+  }, [onResizePhoto, pages, scale])
+
   // 点在文字层之外 → 取消选中
   useEffect(() => {
     if (!selectedId) return
@@ -1194,10 +1246,15 @@ function TextMoveOverlays({
           className="absolute top-0"
           style={{ left: pageNumber === 0 ? 0 : pageWidth + BOOK_GAP, width: pageWidth, height: pageHeight }}
         >
-          {page?.elements.filter((element) => element.kind === 'text' || element.kind === 'art-text').map((element) => {
+          {page?.elements.filter((element) => element.kind === 'text' || element.kind === 'art-text' || element.kind === 'photo').map((element) => {
             // 旧存档可能是在修复前写入的，height 仍只包含第一行。
             // 交互层在读取时按真实宽度补测，确保已有文字无需重新编辑也能被完整选中。
-            const textHeight = Math.max(element.height, measuredTextHeight(element))
+            const contentHeight = element.kind === 'text' || element.kind === 'art-text'
+              ? Math.max(element.height, measuredTextHeight(element))
+              : element.height
+            const resizing = resize?.id === element.id
+            const width = resizing ? resize.width : element.width
+            const height = resizing ? resize.height : contentHeight
             const dragging = drag?.id === element.id && drag.moved
             // 被拖到另一页时，原位只留一个淡淡的影子，真正的预览画在目标页上
             const leftBehind = dragging && crossing !== null
@@ -1216,7 +1273,7 @@ function TextMoveOverlays({
                   }`}
                   data-text-move=""
                   title="单击选中 · 拖动移动（可拖到另一页） · 双击编辑 · Delete 删除"
-                  style={{ left: x, top: y, width: element.width, height: textHeight, transform: `rotate(${element.rotation}deg)`, touchAction: 'none', borderWidth: 1.5 * inverse }}
+                  style={{ left: x, top: y, width, height, transform: `rotate(${element.rotation}deg)`, touchAction: 'none', borderWidth: 1.5 * inverse }}
                   onPointerDown={(event) => {
                     if (event.button !== 0) return
                     event.preventDefault()
@@ -1235,8 +1292,8 @@ function TextMoveOverlays({
                       startY: element.y,
                       startClientX: event.clientX,
                       startClientY: event.clientY,
-                      width: element.width,
-                      height: textHeight,
+                      width,
+                      height,
                       x: element.x,
                       y: element.y,
                       moved: false,
@@ -1250,13 +1307,45 @@ function TextMoveOverlays({
                   }}
                 />
 
+                {selected && element.kind === 'photo' && !dragging && (
+                  <div
+                    className="pointer-events-auto absolute rounded-sm border border-clay-500 bg-white shadow"
+                    data-text-move=""
+                    title="拖动以缩放照片"
+                    style={{
+                      left: x + width,
+                      top: y + height,
+                      width: 10 * inverse,
+                      height: 10 * inverse,
+                      transform: `translate(-50%, -50%) rotate(${-element.rotation}deg)`,
+                      cursor: 'nwse-resize',
+                    }}
+                    onPointerDown={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      const state: ResizeState = {
+                        id: element.id,
+                        pageIndex: pageNumber,
+                        startClientX: event.clientX,
+                        startClientY: event.clientY,
+                        startWidth: element.width,
+                        startHeight: element.height,
+                        width: element.width,
+                        height: element.height,
+                      }
+                      resizeRef.current = state
+                      setResize(state)
+                    }}
+                  />
+                )}
+
                 {/* 选中后的小工具条：固定屏幕尺寸，不随文字旋转 */}
                 {selected && !dragging && (onEdit || onDelete) && (
                   <div
                     className="pointer-events-auto absolute flex items-center gap-1 whitespace-nowrap rounded-full border border-white/10 bg-ink-850/95 p-1 shadow-xl"
                     data-text-move=""
                     style={{
-                      left: x + element.width / 2,
+                      left: x + width / 2,
                       top: y,
                       transform: `translate(-50%, calc(-100% - ${10 * inverse}px)) scale(${inverse})`,
                       transformOrigin: 'bottom center',
